@@ -2,7 +2,6 @@
 """Generate QE/Wannier inputs and the Fortran module from parameter; run no jobs."""
 from pathlib import Path
 import argparse
-import math
 from string import Template
 
 from parameters import ROOT, fortran_module, load
@@ -22,7 +21,7 @@ def render(values: dict) -> dict[Path, str]:
         for k in range(p["nk3"]) for j in range(p["nk2"]) for i in range(p["nk1"]))
     p["weighted_kpoints"] = "\n".join(f"{line} {1/p['nk']:.16e}" for line in p["kpoints"].splitlines())
     a = p["a0"] * 0.529177210903
-    p["unit_cell"] = f"{a:.12f} 0 0\n{-a/2:.12f} {math.sqrt(3)*a/2:.12f} 0\n0 0 {a*p['celldm3']:.12f}"
+    p["unit_cell"] = f"{a:.12f} 0 0\n0 {a:.12f} 0\n0 0 {a*p['celldm3']:.12f}"
     outputs = {ROOT / ".build/parameter_mod.f90": fortran_module(values)}
     for stage in ("1_scf", "2_band", "3_band_no_mag", "5_wannier", "7_spin"):
         for source in (ROOT / stage).glob("*.template"):

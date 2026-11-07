@@ -83,7 +83,7 @@ do irept=1,super_nrept
         enddo
         enddo
         enddo
-        full_H(:,:)=full_H(:,:)+H_sk(:,:)*13.6
+        full_H(:,:)=full_H(:,:)+H_sk(:,:)*13.605693122994d0
 
         full_H_sp(:,:)=full_H(:,:)
 
@@ -96,7 +96,7 @@ do irept=1,super_nrept
                 open(unit=102,file='./R0',action='write',access='append',status='replace')
                 do iwan=1,H_dim
                         do jwan=1,H_dim
-                                write(102,*) iwan,jwan, abs(H_sk(iwan,jwan)*13.6)
+                                write(102,*) iwan,jwan, abs(H_sk(iwan,jwan)*13.605693122994d0)
                         enddo
                 enddo
                 close(102)

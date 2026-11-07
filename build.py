@@ -14,7 +14,6 @@ from parameters import ROOT, fortran_module, load
 
 DEFAULT_LIBS = "-framework Accelerate" if sys.platform == "darwin" else "-llapack -lblas"
 
-FIT_MODULES = ["wannier_weight_mod", "cri3_block_mask_mod", "cri3_c3_basis_mod"]
 
 
 def build_root() -> Path:
@@ -36,12 +35,8 @@ def dependencies(source: Path) -> list[Path]:
         return [ROOT / name for name in ("common/numerics.f90", "6_RVR/frozen_io.f90",
                 "6_RVR/tensor_rvr.f90", "7_spin/local_ansatz.f90")] + [source]
     result = []
-    if source.parent.name == "fit" and source.stem not in FIT_MODULES:
-        result += [source.parent / (name + ".f90") for name in FIT_MODULES]
     if source.stem in ("cal_RVR_zgemm", "test_rvr_kernel"):
         result.append(ROOT / "6_RVR/speedup/rvr_kernel_mod.f90")
-    if source.stem in ("cal_Hsk", "cal_Hsk_trace", "cal_torque_hf", "test_spin_channels"):
-        result.append(ROOT / "7_spin/spin_channels_mod.f90")
     return result + [source]
 
 

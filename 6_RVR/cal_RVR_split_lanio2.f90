@@ -87,10 +87,8 @@ n_dep=1
 s_comp=3
 B_comp=3
 
-if (.not. n_dep*s_comp .eq. n_func) then
-        print*,"n_function not match"
-        stop
-endif
+if(n_func/=n_dep*s_comp) error stop 'Single-Ni RVR requires n_func=3; do not truncate extra channels'
+if(nspin/=1.and.nspin/=2) error stop 'nspin must be 1 or 2'
 
 
 if (nspin .eq. 1) then

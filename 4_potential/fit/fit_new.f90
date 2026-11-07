@@ -7,6 +7,8 @@ program fitting_B
         !with a given spin orientation to be compared using plt_compare.f90 
 
         use fit_mask, only: update_allowed
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+        use iso_fortran_env, only: int64
         implicit none
 
         integer :: i,ix,iy,iz,nx,ny,nz,j
@@ -39,7 +41,8 @@ program fitting_B
         character(len=4) :: act
         integer,allocatable:: one_zero(:)
         integer,allocatable:: sym_BZ(:,:),pt_TF(:)
-        integer :: ni
+        integer :: ni, label_grid(3)
+        integer(int64) :: model_bytes
         logical :: output_exists
 
         real(kind(0d0)) ::rand
@@ -56,7 +59,8 @@ program fitting_B
   open(newunit=ios,file=trim(control_file),status='old',action='read')
   read(ios,nml=fit_control); close(ios)
   if(n_spinor<1.or.n_kind<1.or.diagonal_iters<0.or.full_iters<0) error stop 'Invalid fit dimensions/stages'
-  if(diagonal_iters+full_iters<1.or.lambda_DM<=0d0) error stop 'Set explicit iterations and positive learning rate'
+  if(diagonal_iters+full_iters<1.or.lambda_DM<=0d0.or..not.ieee_is_finite(lambda_DM)) &
+       error stop 'Set explicit iterations and finite positive learning rate'
   if(len_trim(fields_dir)==0.or.len_trim(spin_file)==0.or.len_trim(output_file)==0) error stop 'Explicit fit paths required'
   inquire(file=trim(output_file),exist=output_exists)
   if(output_exists) error stop 'Fit output exists; choose a new output_file'
@@ -129,6 +133,7 @@ close(101)
         open(unit=102,file=path,access='sequential',action='read')
         do i_kind=1,n_kind
                 read(102,*) read_angle(:)
+                if(.not.all(ieee_is_finite(read_angle))) error stop 'Nonfinite fit spin coefficients'
                 spin(i_file,i_kind,:)=read_angle(:)
 
                 do i =1,n_spinor
@@ -145,8 +150,10 @@ close(101)
                 open(unit=101,file=trim(path)&
                         &,access='sequential',action='read'&
                         &,form='unformatted')
-                        read(101) i
+                        read(101) label_grid
+                        if(any(label_grid/=[nx,ny,nz])) error stop 'Fit label grid differs from spin1'
                         read(101) read_VA
+                        if(.not.all(ieee_is_finite(read_VA))) error stop 'Nonfinite fit label'
      ! print*,i,ni
                 close(101)
                 VAs(i_file,i_kind,:,:)=read_VA(:,:)
@@ -172,6 +179,10 @@ close(101)
 
   !goto 300! remove if you want to restart from a existing one
   if(len_trim(restart_file)>0) then
+  inquire(file=trim(restart_file),size=model_bytes,iostat=ios)
+  if(ios/=0) error stop 'Cannot inspect fit restart model'
+  if(model_bytes/=40_int64+8_int64*ni*(15_int64+10_int64*n_spinor)) &
+       error stop 'Restart grid/channel count or float64 five-record format mismatch'
   open(unit=102,file=trim(restart_file),action='read',access='sequential',form='unformatted')
         read(102) VA_ave
         read(102) V0

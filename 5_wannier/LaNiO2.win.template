@@ -1,0 +1,52 @@
+write_hr = true
+write_rmn = false
+write_bvec = false
+write_u_matrices = true
+spinors = ${spinors}
+spin_decomp = false
+kpath = true
+kpath_task = bands
+guiding_centres= true
+use_ws_distance = false
+
+
+dis_froz_min = ${dis_froz_min}
+dis_froz_max = ${dis_froz_max}
+exclude_bands = ${exclude_bands}
+dis_num_iter = ${dis_num_iter}
+dis_conv_tol = ${dis_conv_tol}
+num_wann = ${nwan}
+num_bands = ${num_bands}
+num_iter = ${num_iter}
+
+
+begin projections
+random
+Ni:d
+O:p
+La:d,f
+end projections
+
+bands_plot = true
+bands_plot_project = 1-10
+
+
+begin kpoint_path
+A 0.0 0.0 0.0       B 0.5 0.0 0.0
+B 0.5 0.0 0.0       C 0.5 0.5 0.0
+C 0.5 0.5 0.0       D 0.0 0.0 0.0
+end kpoint_path
+
+begin unit_cell_cart
+${unit_cell}
+end unit_cell_cart
+
+begin atoms_frac
+${structure}
+end atoms_frac
+
+mp_grid = ${nk1} ${nk2} ${nk3}
+
+begin kpoints
+${kpoints}
+end kpoints

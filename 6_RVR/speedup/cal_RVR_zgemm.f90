@@ -68,10 +68,7 @@ wan_max = p_wan_max
   print *, 'Configuration: root parameter (build-time)'
   print *, 'n_func = ', n_func, ' n_dep = ', n_dep, ' nspin = ', nspin, &
            ' wan_min/max = ', wan_min, wan_max
-  if (.not. (n_dep .eq. 6 .or. n_dep .eq. 12 .or. n_dep .eq. 22)) then
-    print *, "unsupported dependency count n_dep=", n_dep
-    stop
-  endif
+  if (n_dep<1) error stop 'n_func must define at least one three-component spin channel'
 
   ! run-time iwan row (compile once)
   call read_row_index(iwan)

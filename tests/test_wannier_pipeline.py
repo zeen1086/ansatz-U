@@ -23,7 +23,7 @@ class WannierPipelineTests(unittest.TestCase):
         r=ROOT
         with tempfile.TemporaryDirectory() as directory:
             w=Path(directory)
-            p=load();p.update(nwan=1,wan_min=1,wan_max=1,n_func=18,nspin=1,nk1=1,nk2=1,nk3=1,
+            p=load();p.update(nwan=1,wan_min=1,wan_max=1,n_func=3,nspin=1,nk1=1,nk2=1,nk3=1,
                              convert_size_x=0,convert_size_y=0,convert_size_z=0,first_band=1,last_band=2,
                              num_bands=2,nscf_dir=str(w/'wannier'),func_dir=str(w/'potential'))
             wan=w/'wannier';wan.mkdir();pot=w/'potential';pot.mkdir();(wan/'WFN').mkdir();(wan/'disentangled').mkdir();(wan/'make_wan').mkdir()
@@ -39,7 +39,7 @@ class WannierPipelineTests(unittest.TestCase):
              with (wan/'WFN'/f'wfn_k1_b{band}_vec_dp').open('wb') as stream:write_record(stream,np.array(wave,dtype='<c16'))
             with (pot/'R_vec').open('wb') as stream:
              write_record(stream,np.array([2],dtype='<i4'));write_record(stream,np.array([[1,0,0],[0,0,0]],dtype='<i4'))
-            field=np.zeros((2,3,6,3),dtype='<f8',order='F');field[:,0,0,0]=[.3,.5];field[:,1,0,0]=[.4,.8];field[:,2,0,0]=[.7,.9]
+            field=np.zeros((2,3,1,3),dtype='<f8',order='F');field[:,0,0,0]=[.3,.5];field[:,1,0,0]=[.4,.8];field[:,2,0,0]=[.7,.9]
             with (pot/'V_func_tmp').open('wb') as stream:
              for _ in range(3):write_record(stream,b'')
              write_record(stream,field)
@@ -60,13 +60,13 @@ class WannierPipelineTests(unittest.TestCase):
             shutil.copyfile(wan/'make_wan/converted/cal_TF_1',wan/'make_wan/cal_TF_1')
             (w/'tmp').mkdir()
             subprocess.run(['mpirun','-np','2',str(w/'rvr'),'1'],cwd=w,env=env,check=True,timeout=30)
-            with (w/'tmp/B_general_1').open('rb') as stream:row=read_array(stream,'<c16',(18,1,2))
+            with (w/'tmp/B_general_1').open('rb') as stream:row=read_array(stream,'<c16',(3,1,2))
             # R_vec permutes both the field and Wannier samples: norm remains 1.
             np.testing.assert_allclose(row[0,0,:],[.8,.4-.6j],atol=1e-13,rtol=0)
             subprocess.run(['mpirun','-np','2',str(w/'rvr'),'2'],cwd=w,env=env,check=True,timeout=30)
-            with (w/'tmp/B_general_2').open('rb') as stream: second=read_array(stream,'<c16',(18,1,2))
+            with (w/'tmp/B_general_2').open('rb') as stream: second=read_array(stream,'<c16',(3,1,2))
             np.testing.assert_allclose(second[0,0,:],[.4+.6j,-.8],atol=1e-13,rtol=0)
-            with (w/'tmp/B_general_1').open('rb') as stream: first=read_array(stream,'<c16',(18,1,2))
+            with (w/'tmp/B_general_1').open('rb') as stream: first=read_array(stream,'<c16',(3,1,2))
             np.testing.assert_array_equal(first,row)
             self.assertAlmostEqual(float(np.sum(abs(a)**2)),1.0,places=13)
             # Check the real band entry point with one and two MPI ranks.

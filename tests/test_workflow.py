@@ -123,8 +123,8 @@ class WorkflowTests(unittest.TestCase):
                 binary=verify(source); stamp=binary.stat().st_mtime_ns
                 build([source],"gfortran",["-O0"],[])
                 self.assertEqual(binary.stat().st_mtime_ns,stamp)
-                self.assertEqual(subprocess.check_output([str(binary)],text=True).strip(),"44")
-                config.write_text(config.read_text().replace("lambda_high = 0.0","lambda_high = 0.5"))
+                self.assertEqual(subprocess.check_output([str(binary)],text=True).strip(),"30")
+                config.write_text(config.read_text().replace("rvr_chunk = 8192","rvr_chunk = 4096"))
                 with self.assertRaises(RuntimeError): verify(source)
                 build([source],"gfortran",["-O0"],[]); verify(source)
                 original=binary.read_bytes()
@@ -139,8 +139,7 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             work=Path(directory)
             (work/"parameter_mod.f90").write_text(fortran_module(load()))
-            for test, dependency in (("test_spin_channels","7_spin/spin_channels_mod.f90"),
-                                     ("test_rvr_kernel","6_RVR/speedup/rvr_kernel_mod.f90")):
+            for test, dependency in (("test_rvr_kernel","6_RVR/speedup/rvr_kernel_mod.f90"),):
                 command=["gfortran","-O2","-fcheck=all",str(work/"parameter_mod.f90"),str(ROOT/dependency),
                          str(ROOT/f"tests/{test}.f90"),"-o",str(work/test)] + shlex.split(os.environ.get("LIBS", DEFAULT_LIBS))
                 subprocess.run(command,cwd=work,check=True,capture_output=True)
@@ -148,7 +147,7 @@ class WorkflowTests(unittest.TestCase):
                 self.assertIn("PASS",run.stdout)
 
     @unittest.skipUnless(shutil.which("gfortran"),"gfortran is unavailable")
-    def test_hamiltonian_trace_and_supercell_fold(self):
+    def test_hamiltonian_supercell_fold(self):
         with tempfile.TemporaryDirectory() as directory:
             work=Path(directory)
             primitive=work/"primitive"; primitive.mkdir()
@@ -176,25 +175,6 @@ class WorkflowTests(unittest.TestCase):
                         expected[2*cell:2*cell+2,2*(target%2):2*(target%2)+2]=matrix*(row+1)/[2,1,2][row]
                 with (folded/f"hr_HYC_{block+1}").open("rb") as stream:
                     np.testing.assert_array_equal(read_array(stream,"<c16",(4,4)),expected)
-            # Compare the actual normal and trace entry points with non-default controls.
-            np.savetxt(folded/"ir_vec_HYC",[[0,0,0]],fmt="%8d%8d%8d")
-            (work/"spin.in").write_text("30 80\n20 110\n")
-            p.update(period_x=1,rvr_dir=str(work),nx=1,ny=1,nz=1,convert_size_x=0,
-                     convert_size_y=0,convert_size_z=0,trace_i=1,trace_j=2,
-                     channel_mask=[0,1,-1,1,0,1],channel_source=[6,4,2,1,3,3],lambda_high=0.7)
-            for nf in (18,36):
-                p["n_func"]=nf
-                (work/"parameter_mod.f90").write_text(fortran_module(p))
-                with (work/"B_general").open("wb") as stream:
-                    write_record(stream,(np.arange(nf*16).reshape((nf,4,4),order="F")*0.01j+0.02).astype("<c16"))
-                for source in ("cal_Hsk","cal_Hsk_trace"):
-                    subprocess.run(["gfortran","-fcheck=all",str(work/"parameter_mod.f90"),str(ROOT/"7_spin/spin_channels_mod.f90"),
-                                    str(ROOT/f"7_spin/{source}.f90"),"-o",str(work/source)],cwd=work,check=True,capture_output=True)
-                    subprocess.run([str(work/source)],cwd=work,check=True,capture_output=True)
-                with (work/"data/Hsk_1").open("rb") as stream: normal=read_array(stream,"<c16",(4,4))
-                with (work/"data_trace/Hsk_1").open("rb") as stream: trace=read_array(stream,"<c16",(4,4))
-                np.testing.assert_array_equal(normal,trace)
-
     @unittest.skipUnless(shutil.which("gfortran"),"gfortran is unavailable")
     def test_qe_wavefunction_export_padding(self):
         source=(ROOT/"0_QE/common/PP/src/wfck2r.f90").read_text()

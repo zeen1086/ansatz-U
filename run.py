@@ -19,7 +19,7 @@ if __name__ == "__main__":
     if args.mpi is not None:
         if args.mpi < 1:
             parser.error("--mpi must be positive")
-        if source.stem in ("make_wan_fun_mpi", "make_dis_mpi", "cal_RVR_split") and args.mpi < 2:
+        if source.stem in ("make_wan_fun_mpi", "make_dis_mpi", "cal_RVR_split", "cal_RVR_zgemm", "cal_RVR_split_lanio2") and args.mpi < 2:
             parser.error("this master/worker program needs at least two MPI ranks")
         command = ["mpirun", "-np", str(args.mpi)] + command
     os.execvp(command[0], command)

@@ -60,6 +60,9 @@ read(101,'(A3,F16.8)') useless_string, a0
 read(101,'(A2,F16.8)') useless_string, celldm3
 close(101)
 
+if(n_func/=3) error stop 'This single-Ni tensor assembly requires n_func=3; do not truncate extra channels'
+if(nspin/=1.and.nspin/=2) error stop 'nspin must be 1 or 2'
+if(wan_min<1.or.wan_max>nwan.or.wan_max<wan_min) error stop 'Invalid Wannier range'
 call make_spin()
 call load_super_size()
 if  (nspin .eq. 1) then
@@ -166,8 +169,8 @@ do iz=0,nz-1
         do jwan=wan_min,wan_max
         do is=1,2/nspin
         do js=1,2/nspin
-                iRVR=1+(i_dir-1)+d_ext*((iwan-wan_min)*2+is-1)
-                jRVR=1+(j_dir-1)+d_ext*((jwan-wan_min)*2+js-1)
+                iRVR=1+(i_dir-1)+d_ext*((iwan-wan_min)*2/nspin+is-1)
+                jRVR=1+(j_dir-1)+d_ext*((jwan-wan_min)*2/nspin+js-1)
                 i_dim=(is+2/nspin*(iwan-1))+nwan*2/nspin*(i_locat-1)
                 j_dim=(js+2/nspin*(jwan-1))+nwan*2/nspin*(j_locat-1)
                ! print*,RVR_tmp(iRVR,jRVR)

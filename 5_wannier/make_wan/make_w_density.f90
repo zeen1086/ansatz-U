@@ -3,7 +3,7 @@ program make_w_density
   implicit none
 
   integer, parameter :: dp = kind(0d0)
-  character(len=32), parameter :: weight_magic = 'CRI3_WANNIER_WEIGHT_V1'
+  character(len=32), parameter :: weight_magic = 'ANSATZ_WANNIER_WEIGHT_V1'
 
   integer :: nx, ny, nz, fit_nx, fit_ny, fit_nz, fit_ni
   integer :: wan_min, wan_max, nspin

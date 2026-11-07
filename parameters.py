@@ -26,7 +26,7 @@ def load(path: Path | None = None) -> dict:
             values[key] = value
     positive = ("nwan", "nspin", "nr1", "nr2", "nr3", "nk1", "nk2", "nk3",
                 "split_super_x", "split_super_y", "split_super_z", "atom_super_x", "atom_super_y", "atom_super_z",
-                "nx", "ny", "nz", "period_x", "period_y", "period_z", "n_file", "n_kind",
+                "nx", "ny", "nz", "period_x", "period_y", "period_z", "split_nspinor",
                 "band_energy_points", "dos_points", "threads", "rvr_chunk", "rvr_channel_block")
     for key in positive:
         if type(values[key]) is not int or values[key] < 1:
@@ -35,14 +35,12 @@ def load(path: Path | None = None) -> dict:
         for number in value if isinstance(value, list) else [value]:
             if isinstance(number, float) and not math.isfinite(number):
                 raise ValueError(f"{key} must be finite")
-    if values["nspin"] not in (1, 2) or values["n_func"] not in (18, 36):
-        raise ValueError("the shared spin assembly supports nspin=1/2 and n_func=18/36")
-    if values["fit_nspinor"] != 6 or values["split_nspinor"] not in (2,6):
-        raise ValueError("the supplied CrI3 site maps require fit_nspinor=6 and split_nspinor=2/6")
+    if values["nspin"] not in (1, 2) or type(values["n_func"]) is not int or values["n_func"] < 3 or values["n_func"] % 3:
+        raise ValueError("require nspin=1/2 and a positive multiple of three tensor functions")
+    if values["n_func"] != 3*values["split_nspinor"]:
+        raise ValueError("n_func must equal 3*split_nspinor")
     if type(values["band_segments"]) is not int or not 1 <= values["band_segments"] <= 999:
         raise ValueError("band_segments must be in 1..999")
-    if values["n_kind"] > values["split_super_x"]*values["split_super_y"]*values["split_super_z"]:
-        raise ValueError("n_kind exceeds the number of split primitive cells")
     if not 1 <= values["wan_min"] <= values["wan_max"] <= values["nwan"]:
         raise ValueError("require 1 <= wan_min <= wan_max <= nwan")
     if (not 1 <= values["first_band"] <= values["last_band"] <= values["nbnd"]
@@ -69,23 +67,17 @@ def load(path: Path | None = None) -> dict:
         raise ValueError("positive broadening and a valid selected_eta are required")
     if not 0 < values["weight_floor"] < 1:
         raise ValueError("invalid weight_floor")
-    if len(values["channel_mask"]) != 6 or any(type(x) is not int or abs(x) > 1 for x in values["channel_mask"]):
-        raise ValueError("channel_mask needs six integer values in -1..1")
-    if len(values["channel_source"]) != 6 or any(type(x) is not int or not 1 <= x <= 6 for x in values["channel_source"]):
-        raise ValueError("channel_source needs six integer values in 1..6")
-    if len(values["trace_r"]) != 3 or any(type(x) is not int for x in values["trace_r"]):
-        raise ValueError("trace_r needs three integers")
     if not isinstance(values["prefix"], str) or not values["prefix"].replace("_", "").isalnum():
         raise ValueError("prefix must contain letters, digits or underscores")
     if values["export_grid"] not in ("smooth", "dense") or type(values["write_v_qe"]) is not bool:
         raise ValueError("export_grid must be smooth/dense and write_v_qe must be boolean")
-    for key in ("ef", "eta", "a0", "celldm3", "ecutwfc", "conv_thr", "fit_tolerance", "lambda_high", "cr_magnetization"):
+    for key in ("ef", "eta", "a0", "celldm3", "ecutwfc", "conv_thr", "ni_magnetization"):
         if isinstance(values[key], bool) or not isinstance(values[key], (int, float)):
             raise ValueError(f"{key} must be numeric")
     if values["a0"] <= 0 or values["celldm3"] <= 0 or values["conv_thr"] <= 0:
         raise ValueError("lattice constants and conv_thr must be positive")
-    if values["cr_magnetization"] <= 0:
-        raise ValueError("cr_magnetization must be a positive spin-vector length")
+    if values["ni_magnetization"] < 0:
+        raise ValueError("ni_magnetization must be nonnegative")
     for key in PATH_KEYS:
         values[key] = str((path.parent / values[key]).resolve())
     return values

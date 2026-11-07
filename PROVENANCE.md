@@ -1,6 +1,6 @@
 # 来源
 
-公共流程来自 [zeen1086/ansatz](https://github.com/zeen1086/ansatz)，commit `05fa36cbf6fb7740bd55293466e79fa13af545c7`。已复制其QE修改、输入模板、拟合、Wannier、RVR、spin、构建配置和测试；根README与忽略规则作合并。QE许可证保留在 `0_QE/License`。
+公共工具来自 [zeen1086/ansatz](https://github.com/zeen1086/ansatz)，commit `05fa36cbf6fb7740bd55293466e79fa13af545c7`。保留QE修改、Wannier、RVR及构建工具；材料专用拟合、对称投影和自旋通道分支已删除，输入模板改用原LaNiO₂结构与投影。QE许可证保留在 `0_QE/License`。
 
 LaNiO₂ 分支来源对应：
 

@@ -3,9 +3,9 @@
  outdir='./tmp', verbosity='high', wf_collect=.true.,
 /
 &SYSTEM
- noncolin=.true., starting_magnetization(1)=${cr_magnetization}, starting_magnetization(2)=${i_magnetization},
+ noncolin=.true., starting_magnetization(1)=0.0, starting_magnetization(2)=${ni_magnetization}, starting_magnetization(3)=0.0,
  ecutwfc=${ecutwfc}, celldm(1)=${a0}, celldm(3)=${celldm3},
- ibrav=4, nat=8, ntyp=2,
+ ibrav=6, nat=4, ntyp=3,
  occupations='smearing', smearing='mv', degauss=${degauss},
  nr1=${nr1}, nr2=${nr2}, nr3=${nr3},
 /
@@ -14,8 +14,9 @@
  conv_thr=${conv_thr}, mixing_beta=${mixing_beta},
 /
 ATOMIC_SPECIES
-Cr ${cr_mass} ${cr_pseudo}
-I ${i_mass} ${i_pseudo}
+La 138.90547 ${la_pseudo}
+Ni 58.6934 ${ni_pseudo}
+O 15.9994 ${o_pseudo}
 ATOMIC_POSITIONS (crystal)
 ${structure}
 K_POINTS automatic

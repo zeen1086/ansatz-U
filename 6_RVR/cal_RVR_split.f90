@@ -58,16 +58,9 @@ if (mod(n_func, s_comp) .ne. 0) then
 endif
 
 n_dep=n_func/s_comp
-if (.not. (n_dep .eq. 6 .or. n_dep .eq. 12 .or. n_dep .eq. 22)) then
-        print*,"unsupported dependency count n_dep=", n_dep
-        stop
-endif
+if (n_dep<1) error stop 'n_func must define at least one three-component spin channel'
 print *, 'Configuration: root parameter (build-time)'
 print *, 'n_func = ', n_func, ' n_dep = ', n_dep
-if (n_dep .eq. 22) then
-        print *, 'model magic = CRI3_EDGE_RESIDUAL_V1'
-        print *, 'edge order = 1<-2 2<-1 1<-3 3<-1 1<-4 4<-1 2<-5 5<-2 2<-6 6<-2'
-endif
 
 if (nspin .eq. 1) then
         if (iwan .lt. wan_min*2-1 .or. iwan .gt. wan_max*2) then
