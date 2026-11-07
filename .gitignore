@@ -1,0 +1,21 @@
+# Builds, runtime data and model caches belong outside this source project.
+.DS_Store
+__pycache__/
+*.py[cod]
+*.o
+*.mod
+*.smod
+*.x
+*.log
+*.npz
+*.npy
+*.au
+*.au.json
+build/
+remote_cache/
+data/
+tot_HR/
+super_H/
+tmp/
+.env
+.env.*
