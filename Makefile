@@ -21,22 +21,22 @@ $(BUILD)/ansatzU: $(CORE) $(ROOT)/7_spin/run_ansatzU.f90 | $(BUILD)
 legacy: $(BUILD)/fit_new $(BUILD)/rvr_combine $(BUILD)/rearrange_HR $(BUILD)/tensor_Hsk $(BUILD)/tensor_Hsk_AFM $(BUILD)/combine
 $(BUILD)/fit_new: $(ROOT)/4_potential/fit/fit_mask.f90 $(ROOT)/4_potential/fit/fit_new.f90 | $(BUILD)
 	cd $(BUILD) && $(FC) $(LEGACYFLAGS) -J. $^ -o $@
-$(BUILD)/rvr_combine: $(ROOT)/6_RVR/combine.f90 | $(BUILD)
+$(BUILD)/rvr_combine: $(ROOT)/6_RVR/combine_lanio2.f90 | $(BUILD)
 	$(FC) $(LEGACYFLAGS) $< -o $@
-$(BUILD)/rearrange_HR: $(ROOT)/6_RVR/rearrange_HR.f90 | $(BUILD)
+$(BUILD)/rearrange_HR: $(ROOT)/6_RVR/rearrange_HR_lanio2.f90 | $(BUILD)
 	$(FC) $(LEGACYFLAGS) $< -o $@ $(LIBS)
-$(BUILD)/tensor_Hsk: $(ROOT)/7_spin/cal_Hsk.f90 | $(BUILD)
+$(BUILD)/tensor_Hsk: $(ROOT)/7_spin/cal_Hsk_lanio2.f90 | $(BUILD)
 	$(FC) $(LEGACYFLAGS) $< -o $@
-$(BUILD)/tensor_Hsk_AFM: $(ROOT)/7_spin/AFM/cal_Hsk.f90 | $(BUILD)
+$(BUILD)/tensor_Hsk_AFM: $(ROOT)/7_spin/AFM/cal_Hsk_lanio2.f90 | $(BUILD)
 	$(FC) $(LEGACYFLAGS) $< -o $@
-$(BUILD)/combine: $(ROOT)/7_spin/combine.f90 | $(BUILD)
+$(BUILD)/combine: $(ROOT)/7_spin/combine_lanio2.f90 | $(BUILD)
 	$(FC) $(LEGACYFLAGS) $< -o $@
 mpi: legacy $(BUILD)/cal_RVR_split $(BUILD)/band $(BUILD)/calc_tot_ene
-$(BUILD)/cal_RVR_split: $(ROOT)/6_RVR/cal_RVR_split.f90 | $(BUILD)
+$(BUILD)/cal_RVR_split: $(ROOT)/6_RVR/cal_RVR_split_lanio2.f90 | $(BUILD)
 	$(MPIFC) $(LEGACYFLAGS) $< -o $@
-$(BUILD)/band: $(ROOT)/7_spin/band.f90 | $(BUILD)
+$(BUILD)/band: $(ROOT)/7_spin/band_lanio2.f90 | $(BUILD)
 	$(MPIFC) $(LEGACYFLAGS) $< -o $@ $(LIBS)
-$(BUILD)/calc_tot_ene: $(ROOT)/7_spin/calc_tot_ene.f90 | $(BUILD)
+$(BUILD)/calc_tot_ene: $(ROOT)/7_spin/calc_tot_ene_lanio2.f90 | $(BUILD)
 	$(MPIFC) $(LEGACYFLAGS) $< -o $@ $(LIBS)
 clean:
 	@echo 'Build artifacts are external; remove only your owned BUILD directory explicitly.'

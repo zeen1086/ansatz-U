@@ -1,0 +1,14 @@
+&inputpp
+outdir = './tmp'
+prefix= '${prefix}'
+seedname= '${prefix}'
+               !spin_component = 'up'
+               write_mmn = .true.
+               write_amn = .true.
+               write_unk = .false.
+
+               write_dmn = .false.
+               write_spn = .false.
+               !read_sym = .true.
+               wan_mode = 'standalone'
+          /

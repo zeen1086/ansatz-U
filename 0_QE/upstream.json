@@ -1,0 +1,21 @@
+{
+  "version": "7.6",
+  "tag": "qe-7.6",
+  "files": {
+    "PP/CMakeLists.txt": "bb9c82e7621d1e67929e02f70b05727bc95c183621a40cb2eb60daf1c8da540c",
+    "Modules/input_parameters.f90": "5def120503a296463c1ea5889a6802bd88a6ea29a4ea7b0f1d7bdb130552d543",
+    "Modules/noncol.f90": "c6ed5bd6392cb9dbae2b20721250b5f0962e4ccc25676bce6386031dc1c526d6",
+    "Modules/read_namelists.f90": "ad78680be087dfdbcddda2935273fc0901e79b88e18a62a630991d5cd2e2830e",
+    "PW/src/add_bfield.f90": "0241192664b15b917e9bbe262a346c240a7b1eacdc71f86fbdd48282e4422c0e",
+    "PW/src/input.f90": "b42a145c2e0c4d5877093ae5f4191a3d765cc4755771e1229bf470c4f803a7d5",
+    "PW/src/report_mag.f90": "bda0e914507346f0c64a87c3529f12f01f2f5942ba74adc4cb4910de0b1df7aa",
+    "PP/src/Makefile": "ecfc0950821e5e84cc33c9e992bc5dc787d27a4b95a52589398a28acd7642908",
+    "PP/src/pp_example.f90": "c714091712f4e310ef15fefe1d1bf619631d46db00e994ab5a393a1321a3855f",
+    "PP/src/wfck2r.f90": "72457d41252eab431afb10cf2e4d55c663b62f83a65ac01d1593a4a387e7a56d",
+    "PW/CMakeLists.txt": "842940b4ea454c1c67d800a6ef5fdd93bf70c711020ff815156ef9a45827d04e",
+    "PW/src/set_vrs.f90": "7ec81bc3130e42b208fb651e02f789f752d280c484f7c9850c93d328a6fc6ca3",
+    "PW/src/Makefile": "d1a0357b1ab9a62e5a4f78aa28b11c1059fa887046fcb41786b1d4d9ff7d7559",
+    "PW/src/hyc_scalar_potential.f90": null,
+    "PW/src/clean_pw.f90": "334e940ec83a837f356e3bfe1881099daba874c19ef4cf07d40e4e3c72eef353"
+  }
+}

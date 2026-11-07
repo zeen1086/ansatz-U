@@ -1,0 +1,67 @@
+write_hr = true
+write_rmn = false
+write_bvec = false
+write_u_matrices = true
+spinors = ${spinors}
+spin_decomp = false
+kpath = true
+kpath_task = bands
+guiding_centres= true
+use_ws_distance = false
+
+
+dis_froz_min = ${dis_froz_min}
+dis_froz_max = ${dis_froz_max}
+exclude_bands = ${exclude_bands}
+dis_num_iter = ${dis_num_iter}
+dis_conv_tol = ${dis_conv_tol}
+num_wann = ${nwan}
+num_bands = ${num_bands}
+num_iter = ${num_iter}
+
+
+begin projections
+Cr: d:x=0.5,0.866025,0.0
+I: p:x=0.5,0.866025,0.0
+f=0.6666675,0.3333325,0.57775805884:s
+f=0.8277725,0.4944375,0.51944:s
+f=0.6666675,0.4944375,0.48056:s
+f=0.5055625,0.3333325,0.51944:s
+f=0.6666675,0.1722275,0.51944:s
+f=0.8277725,0.3333325,0.48056:s
+f=0.6666675,0.3333325,0.42224194115:s
+f=0.5055625,0.1722275,0.48056:s
+f=0.3333325,0.6666675,0.57775805884:s
+f=0.4944375,0.8277725,0.51944:s
+f=0.3333325,0.8277725,0.48056:s
+f=0.1722275,0.6666675,0.51944:s
+f=0.3333325,0.5055625,0.51944:s
+f=0.4944375,0.6666675,0.48056:s
+f=0.3333325,0.6666675,0.42224194115:s
+f=0.1722275,0.5055625,0.48056:s
+end projections
+
+bands_plot = true
+bands_plot_project = 1-10
+dist_cutoff_mode="two_dim"
+
+
+begin kpoint_path
+A 0.0 0.0 0.0       B 0.333 0.333 0.0
+B 0.3333 0.3333 0.0       C 0.5 0.0 0.0
+C 0.5 0.0 0.0       D 0.0 0.0 0.0
+end kpoint_path
+
+begin unit_cell_cart
+${unit_cell}
+end unit_cell_cart
+
+begin atoms_frac
+${structure}
+end atoms_frac
+
+mp_grid = ${nk1} ${nk2} ${nk3}
+
+begin kpoints
+${kpoints}
+end kpoints

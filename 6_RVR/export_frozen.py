@@ -44,7 +44,7 @@ def export(source, output, expected_sha):
               source_components='H0 and Hv are combined in this frozen NPZ; no individual decomposition is invented',
               projector_order='rows=[up d1..d5,down d1..d5]; Hamiltonian=(cell,orbital,up/down)',
               translations='rr=WS [-4,4]^3; KB=R3 [-1,1]^3 x,y,z then orbital',
-              lossless_readback=True,physical_release=False)
+              lossless_readback=True)
     output.with_suffix(output.suffix+'.json').write_text(json.dumps(meta,indent=2)+'\n')
     return meta
 

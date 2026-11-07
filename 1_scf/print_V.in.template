@@ -1,0 +1,6 @@
+&inputpp
+ outdir='./tmp'
+ prefix='${prefix}'
+ export_grid='${export_grid}'
+ write_v_qe=${write_v_qe}
+/

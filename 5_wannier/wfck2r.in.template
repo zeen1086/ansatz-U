@@ -1,0 +1,10 @@
+&inputpp
+   prefix='${prefix}',
+   outdir='./tmp',
+   first_k=1
+   last_k=${nk}
+   first_band=${first_band}
+   last_band=${last_band}
+ loctave=.false.
+ write_hyc=.true.
+ /

@@ -1,0 +1,27 @@
+&CONTROL
+ prefix='${prefix}', calculation='bands', pseudo_dir=${pseudo_dir},
+ outdir='./tmp', verbosity='high', wf_collect=.true.,
+/
+&SYSTEM
+ noncolin=${noncolin},
+
+ ecutwfc=${ecutwfc}, celldm(1)=${a0}, celldm(3)=${celldm3},
+ ibrav=4, nat=8, ntyp=2, nbnd=${nbnd},
+ occupations='smearing', smearing='mv', degauss=${degauss},
+ nr1=${nr1}, nr2=${nr2}, nr3=${nr3},
+/
+&ELECTRONS
+ diagonalization='david', mixing_mode='plain',
+ conv_thr=${conv_thr}, mixing_beta=${mixing_beta},
+/
+ATOMIC_SPECIES
+Cr ${cr_mass} ${cr_pseudo}
+I ${i_mass} ${i_pseudo}
+ATOMIC_POSITIONS (crystal)
+${structure}
+K_POINTS (crystal_b)
+4
+0.00000 0.0000 0.0000 ${band_segments}
+0.33330 0.3333 0.0000 ${band_segments}
+0.00000 0.5000 0.0000 ${band_segments}
+0.00000 0.0000 0.0000 1

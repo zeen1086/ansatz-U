@@ -34,7 +34,7 @@ program run_ansatzU
  len_trim(readouts_path)>0.and.len_trim(output_prefix)>0,'All external paths and output_prefix must be explicit')
  call require(mode=='torque'.or.mode=='table3','mode must be torque or table3')
  call require(ieee_is_finite(ueff).and.ueff>=0.and.sigma>0.and.ieee_is_finite(sigma),'Invalid Ueff or FD sigma (eV)')
- call require(electrons_per_ni>0.and.electrons_per_ni<60,'Expected active electrons/Ni in (0,60); do not copy THE.in 46')
+ call require(electrons_per_ni>0.and.electrons_per_ni<60,'Expected active electrons/Ni in (0,60)')
  call require(all(perturb_site>=0).and.all(perturb_site<L),'perturb_site outside cell')
  call require(ieee_is_finite(delta),'delta must be finite radians')
  if(mode=='table3') call require(delta/=0,'Table3 requires nonzero delta radians')
@@ -166,7 +166,7 @@ program run_ansatzU
  do i=1,nread
  write(u,'(2i8,3es26.16e3)') sites(:,i),tau(:,i,pass),sum(tau(:,i,pass))
  enddo
- write(u,'(a)') '# band_sum=sum_k w Tr[f_FD(H)H]; not full DFT total energy. physical_release=false'
+ write(u,'(a)') '# band_sum=sum_k w Tr[f_FD(H)H]; band sum, eV'
  close(u)
  enddo
  if(mode=='table3') then
@@ -180,7 +180,7 @@ program run_ansatzU
  close(u)
  endif
  call cpu_time(seconds)
- write(*,'(a,es14.6,a)') 'Completed Fortran ansatz+U, CPU seconds=',seconds-start,'; physical_release=false'
+ write(*,'(a,es14.6)') 'Completed Fortran ansatz+U, CPU seconds=',seconds-start
 contains
  subroutine dump(path,a)
  character(*),intent(in)::path

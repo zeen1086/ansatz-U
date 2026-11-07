@@ -1,0 +1,3 @@
+&BANDS
+ prefix='${prefix}', outdir='./tmp', filband='${prefix}.dat',
+/

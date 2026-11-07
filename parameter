@@ -1,0 +1,108 @@
+# Global settings (TOML). Regenerate inputs and rebuild after editing.
+[paths]
+scf_dir = "1_scf"
+func_dir = "4_potential/fit"
+nscf_dir = "5_wannier"
+rvr_dir = "6_RVR"
+super_h_dir = "6_RVR/super_H"
+pseudo_dir = "pseudopotentials"
+
+[model]
+n_func = 36
+nwan = 44
+nspin = 1
+wan_min = 1
+wan_max = 44
+convert_size_x = 1
+convert_size_y = 1
+convert_size_z = 0
+period_x = 5
+period_y = 5
+period_z = 1
+nx = 120
+ny = 120
+nz = 1
+axial = 1.51
+fac = 138.999030041732
+a0 = 13.17139000 # Bohr
+celldm3 = 2.85
+ef = -1.6875 # eV
+eta = 0.002
+broadening = [0.002] # eV
+selected_eta = 1
+
+[potential]
+split_nspinor = 6
+split_super_x = 2
+split_super_y = 2
+split_super_z = 1
+atom_super_x = 2
+atom_super_y = 2
+atom_super_z = 1
+fit_nspinor = 6 # fixed six-channel CrI3 geometry
+n_file = 30
+n_kind = 4
+weight_floor = 0.1
+prox_mu_rel = 0.1
+symmetry_tolerance = 0.001
+max_symmetry_passes = 20
+map_tolerance = 1e-8
+strict_tolerance = 1e-12
+offdiag_tolerance = 1e-24
+spin_isotropy_mix = 0.0
+use_nonclosed_symmetry = false
+fit_l1_relative = 0.0
+fit_l2_relative = 0.01
+fit_max_iter = 1000
+fit_tolerance = 1e-10
+
+[qe]
+prefix = "CrI3"
+export_grid = "smooth"
+write_v_qe = true
+ecutwfc = 85.0
+nr1 = 81
+nr2 = 81
+nr3 = 225
+nk1 = 12
+nk2 = 12
+nk3 = 1
+nbnd = 100
+conv_thr = 1e-7
+mixing_beta = 0.3
+degauss = 0.0001
+cr_magnetization = 3.0
+i_magnetization = 0.0
+cr_pseudo = "Cr_DOJO_FR04_PBEsol_STANDARD.upf"
+i_pseudo = "I_DOJO_FR04_PBEsol_STANDARD.upf"
+cr_mass = 51.99610
+i_mass = 126.9045
+band_segments = 20
+
+[wannier]
+num_bands = 80
+first_band = 15
+last_band = 94
+exclude_bands = "1-14, 95-100"
+dis_froz_min = -8.0
+dis_froz_max = 3.0
+dis_num_iter = 500
+dis_conv_tol = 1e-6
+num_iter = 0
+
+[spin]
+band_energy_min = 0.0
+band_energy_max = 3.0
+band_energy_points = 300
+dos_min = -20.0
+dos_max = 20.0
+dos_points = 4000
+threads = 4
+rvr_chunk = 8192
+rvr_channel_block = 6
+channel_mask = [1, 1, 1, 1, 1, 1]
+channel_source = [1, 2, 3, 4, 5, 6]
+lambda_high = 0.0
+trace_r = [0, 0, 0]
+trace_i = 11
+trace_j = 20
