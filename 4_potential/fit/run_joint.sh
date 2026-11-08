@@ -20,7 +20,7 @@ trap 'printf "%s\n" "$status" > "$run/STATUS"' EXIT
 mkdir "$run/inputs"
 cp "$control" "$run/fit.nml"
 cp "$list" "$run/source_archives.tsv"
-: > "$run/rows.manifest"
+rows=()
 : > "$run/archive_checksums.txt"
 count=0
 while IFS=$'\t' read -r name weight anchor unit archive extra || [[ -n "${name:-}" ]]; do
@@ -44,17 +44,17 @@ while IFS=$'\t' read -r name weight anchor unit archive extra || [[ -n "${name:-
   unzip -p "$archive" moments_muB.npy > "$folder/moments.npy"
   members=$(unzip -Z1 "$archive")
   case $'\n'"$members"$'\n' in *$'\nV_U_eV.npy\n'*) unzip -p "$archive" V_U_eV.npy > "$folder/VU.npy";; esac
-  printf '%s %s %s %s\n%s\n' "$name" "$weight" "$anchor" "$unit" "$folder" >> "$run/rows.manifest"
+  rows+=("$name $weight $anchor $unit" "$folder")
   if command -v sha256sum >/dev/null; then sha256sum "$archive" >> "$run/archive_checksums.txt"
   else shasum -a 256 "$archive" >> "$run/archive_checksums.txt"; fi
 done < "$list"
 [[ $count -gt 0 ]] || { echo 'No DFT states listed' >&2; exit 2; }
-{ printf '%s\n' "$count"; cat "$run/rows.manifest"; } > "$run/dataset.manifest"
-if "$build/fit_joint" "$run/fit.nml" "$run/dataset.manifest" "$run/model.joint" "$run/fit_report.txt" > "$run/fit.log" 2>&1; then
+printf '%s\n' "$count" "${rows[@]}" > "$run/dataset.manifest"
+if (cd "$run" && "$build/fit_joint" fit.nml dataset.manifest) > "$run/fit.log" 2>&1; then
   status=COMPLETE
 else
   code=$?
   tail -n 30 "$run/fit.log" >&2
   exit "$code"
 fi
-printf 'Joint fit complete: %s\n' "$run/model.joint"
+printf 'Joint fit complete: %s\n' "$run/V_func_tmp"

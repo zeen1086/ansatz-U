@@ -2,7 +2,8 @@ program eval_joint
  use joint_model
  implicit none
  type(joint_potential)::m
- character(4096)::control,model,texture,prefix,path
+ character(4096)::control,model,texture,prefix,path,summary
+ character(12),parameter::output_names(4)=[character(12)::'V_fit','dV_fit','N_VU_fit','dN_dVU_fit']
  integer::u,ios,i,derivative_site=1
  real(dp)::ueff=1._dp,occupation_tolerance=1e-8_dp,e(3,4),axes(3,4),de(3,4),lo,hi,herm
  logical::enforce_occupation_bounds=.true.,exists
@@ -11,8 +12,13 @@ program eval_joint
  namelist /joint_eval_control/ ueff,derivative_site,occupation_tolerance,enforce_occupation_bounds
  call get_command_argument(1,control);call get_command_argument(2,model)
  call get_command_argument(3,texture);call get_command_argument(4,prefix)
- call require(min(len_trim(control),len_trim(model),len_trim(texture),len_trim(prefix))>0, &
-  'Usage: eval_joint eval.nml model.joint four_spins_axes.dat output_prefix')
+ call require(command_argument_count()>=3.and.command_argument_count()<=4.and. &
+  min(len_trim(control),len_trim(model),len_trim(texture))>0, &
+  'Usage: eval_joint eval.nml V_func_tmp four_spins_axes.dat [output_prefix]')
+ summary='eval_report.txt'
+ if(len_trim(prefix)>0) then
+  summary=trim(prefix)//'.txt';prefix=trim(prefix)//'.'
+ endif
  open(newunit=u,file=trim(control),status='old',action='read');read(u,nml=joint_eval_control);close(u)
  call require(derivative_site>=1.and.derivative_site<=4,'derivative_site is1..4 in DFT Ni order')
  call require(ieee_is_finite(occupation_tolerance).and.occupation_tolerance>=0,'Invalid occupation tolerance')
@@ -30,24 +36,22 @@ program eval_joint
   'N leaves occupation bounds at requested texture; no clipping/output; inspect model extrapolation')
  ! Check the entire output set before creating its first file.
  do i=1,5
-  select case(i)
-  case(1);path=trim(prefix)//'.fields_Ry.bin'
-  case(2);path=trim(prefix)//'.dfields_Ry_per_rad.bin'
-  case(3);path=trim(prefix)//'.N_VU_eV.bin'
-  case(4);path=trim(prefix)//'.dN_dVU_eV_per_rad.bin'
-  case(5);path=trim(prefix)//'.txt'
-  end select
+  if(i<=4) then
+   path=trim(prefix)//trim(output_names(i))
+  else
+   path=summary
+  endif
   inquire(file=trim(path),exist=exists);call require(.not.exists,'Output exists: '//trim(path))
  enddo
- open(newunit=u,file=trim(prefix)//'.fields_Ry.bin',status='new',form='unformatted',convert='little_endian')
+ open(newunit=u,file=trim(prefix)//trim(output_names(1)),status='new',form='unformatted',convert='little_endian')
  write(u) int(m%grid,int32);write(u) field/ry_ev;close(u)
- open(newunit=u,file=trim(prefix)//'.dfields_Ry_per_rad.bin',status='new',form='unformatted',convert='little_endian')
+ open(newunit=u,file=trim(prefix)//trim(output_names(2)),status='new',form='unformatted',convert='little_endian')
  write(u) int(m%grid,int32);write(u) dfield/ry_ev;close(u)
- open(newunit=u,file=trim(prefix)//'.N_VU_eV.bin',status='new',form='unformatted',convert='little_endian')
+ open(newunit=u,file=trim(prefix)//trim(output_names(3)),status='new',form='unformatted',convert='little_endian')
  write(u) int(m%atom_ids,int32),ueff;write(u) n;write(u) vu;close(u)
- open(newunit=u,file=trim(prefix)//'.dN_dVU_eV_per_rad.bin',status='new',form='unformatted',convert='little_endian')
+ open(newunit=u,file=trim(prefix)//trim(output_names(4)),status='new',form='unformatted',convert='little_endian')
  write(u) int(m%atom_ids,int32),int(derivative_site,int32);write(u) dn;write(u) dvu;close(u)
- open(newunit=u,file=trim(prefix)//'.txt',status='new')
+ open(newunit=u,file=trim(summary),status='new')
  write(u,'(a,es24.15)') 'Ueff_eV=',ueff;write(u,'(a,i0)') 'derivative_site_1based=',derivative_site
  write(u,'(a,2es24.15)') 'N_eigenvalue_range=',lo,hi;write(u,'(a,es24.15)') 'N_Hermiticity_error=',herm
  write(u,'(a,4es24.15)') 'field_component_RMS_eV=',sqrt(sum(field**2,dim=1)/size(field,1))

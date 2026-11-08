@@ -27,8 +27,11 @@ program fit_joint
  complex(dp)::d(10,10),n(10,10),q(5,5),mag(5,5,3),pn(10,10,4),dn(10,10,4)
  call get_command_argument(1,control);call get_command_argument(2,manifest)
  call get_command_argument(3,output);call get_command_argument(4,report)
- call require(min(len_trim(control),len_trim(manifest),len_trim(output),len_trim(report))>0, &
-  'Usage: fit_joint controls.nml dataset.manifest model.joint fit_report.txt')
+ call require(command_argument_count()>=2.and.command_argument_count()<=4.and. &
+  min(len_trim(control),len_trim(manifest))>0, &
+  'Usage: fit_joint controls.nml dataset.manifest [V_func_tmp [fit_report.txt]]')
+ if(len_trim(output)==0) output='V_func_tmp'
+ if(len_trim(report)==0) report='fit_report.txt'
  inquire(file=trim(output),exist=exists);call require(.not.exists,'Model output exists; select a new run')
  open(newunit=u,file=trim(control),status='old',action='read');read(u,nml=joint_fit_control);close(u)
  call require(all(ieee_is_finite([rcond,ueff,anchor_tolerance_eV,anchor_tolerance_N, &

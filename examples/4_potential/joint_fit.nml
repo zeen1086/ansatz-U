@@ -1,3 +1,5 @@
+! fit_joint fit.nml dataset.manifest: defaults V_func_tmp + fit_report.txt in the calling directory.
+! V_func_tmp uses LANIO2_JOINT_V1, not the legacy five-record restart/RVR format.
 &joint_fit_control
  rcond=1d-10,
  ueff=1d0,

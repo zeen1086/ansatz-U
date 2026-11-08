@@ -6,8 +6,11 @@
 make joint BUILD=/absolute/build
 4_potential/fit/run_joint.sh /absolute/states.tsv \
   examples/4_potential/joint_fit.nml /absolute/new_run /absolute/build
-/absolute/build/eval_joint examples/4_potential/joint_eval.nml \
-  /absolute/new_run/model.joint examples/4_potential/joint_texture.dat /absolute/new_run/probe
+# 先在当前目录保存仓库绝对路径，再进入外部运行目录求值：
+repo="$PWD"
+cd /absolute/new_run
+/absolute/build/eval_joint "$repo/examples/4_potential/joint_eval.nml" \
+  V_func_tmp "$repo/examples/4_potential/joint_texture.dat"
 ```
 
 `RUN`、`BUILD` 必须在源码树外，运行目录须不存在。已有输出不覆盖。
@@ -34,8 +37,10 @@ shell 用 `unzip -p` 按固定成员名读取已有 DFT 标签 NPZ，不计算�
 
 Fortran 原生解析 NPY v1/v2/v3、C/Fortran 顺序和 little-endian 数据；对象、单精度、截断、尺寸/原子顺序错配、非有限值及非 Hermitian N 均报错。
 归一化后使用固定长度的自旋方向；DFT幅值已包含在标签和拟合系数中，不再乘0.372、0.4或S²，也未引入独立的纵向幅值自由度。
-也可直接调用 `fit_joint fit.nml dataset.manifest model.joint report.txt`。
+也可直接调用 `fit_joint fit.nml dataset.manifest [V_func_tmp [fit_report.txt]]`。
+省略后两个参数时，在调用目录新建 `V_func_tmp` 和 `fit_report.txt`；也可显式指定外部路径。
 manifest 首行态数，每态两行：`name weight anchor unit`，以及显式解包目录；目录内为 `grid/atom_ids/scalar/B/moments/N.npy` 和可选 `VU.npy`。
+shell 直接写入 `dataset.manifest`，不再生成 `rows.manifest`；既有运行结果不改动。
 
 ## 模型与拟合目标
 
@@ -48,12 +53,14 @@ manifest 首行态数，每态两行：`name weight anchor unit`，以及显式�
 目标为显式态权重下的原始标量场、B场和N矩阵三个最小二乘块。
 它采用旧 Python 的特征族，**不是旧投影算符联合损失或其冻结训练结果的复现**。
 SVD 直接求解，硬锚点用零空间消元；报告有效相对截断、秩、奇异值及逐态残差。
+`fit_report.txt` 集中保留拟合参数、态权重与锚点、秩/奇异值、逐态残差和占据检查。
 未识别方向取声明的 SVD 最小范数，不静默增加正则项或重调权重。
 `remove_scalar_mean` 默认关闭；开启时每态被移除的均值明确记入报告，不能与另一势零点直接比较。
 原 `fit_new` 的对角/全分量迭代和重启接口保留；新 SVD 入口不使用迭代次数或学习率。
 
-`model.joint` 是新 schema：16字节 `LANIO2_JOINT_V1 `、12个int32、两个float64、两个int32标志，接着列优先float64数组 `(8,ngrid)`、`(40,ngrid)`、`(8,15)`、`(4,10)`、`(12,15)`、`(6,10)`。
+新版 `V_func_tmp`（原名 `model.joint`）保留新 schema：16字节 `LANIO2_JOINT_V1 `、12个int32、两个float64、两个int32标志，接着列优先float64数组 `(8,ngrid)`、`(40,ngrid)`、`(8,15)`、`(4,10)`、`(12,15)`、`(6,10)`。
 标量/B系数为eV，N系数无量纲；训练占据越界时保留 gate=0 候选和报告，求值器拒绝使用。N不裁剪。
+读取仍检查格式头、版本、字节序、尺寸和完整字节数；原 `model.joint` 内容无需转换，只改变默认文件名。
 
 ## 求值与角度导数
 
@@ -61,9 +68,20 @@ SVD 直接求解，硬锚点用零空间消元；报告有效相对截断、秩�
 `derivative_site=1..4` 选择扰动输入。导数按 `dei/dtheta=axis×ei` 解析求出，包含标量/B及所有受影响Ni的N。
 `ueff` 从求值输入实际读取，`VU=ueff*(I/2-N)`、`dVU=-ueff*dN`；改变此参数并不重新求解DFT密度。
 
-输出分别为原网格格式的 `fields_Ry.bin`、`dfields_Ry_per_rad.bin`，以及完整复数 `N_VU_eV.bin`、`dN_dVU_eV_per_rad.bin` 和简报。
-字段顺序是 scalar,Bx,By,Bz。N/VU各为独立的 `(10,10,4)` 双精度复数记录；N保留全部轨道/自旋非对角元。
+省略求值的第四参数时，在调用目录输出下列文件及 `eval_report.txt`。保留原二进制布局，不拆分记录：
+
+| 原名 | 新名 | 单位 |
+|---|---|---|
+| `fields_Ry.bin` | `V_fit` | Ry，scalar/Bx/By/Bz |
+| `dfields_Ry_per_rad.bin` | `dV_fit` | Ry/rad，同上 |
+| `N_VU_eV.bin` | `N_VU_fit` | N无量纲，VU为eV |
+| `dN_dVU_eV_per_rad.bin` | `dN_dVU_fit` | dN为1/rad，dVU为eV/rad |
+
+仍可传入第四参数 `output_prefix`，例如 `/absolute/new_run/probe`，生成 `probe.V_fit` 等四个文件及 `probe.txt`。
+场文件首记录为网格，第二记录为 `(ngrid,4)` float64，网格x最快；N文件首记录为原子顺序及Ueff，导数文件首记录为原子顺序及扰动Ni。
+N/VU及其导数各保留两个 `(10,10,4)` complex128记录，包含全部轨道/自旋非对角元。
 
 本入口完成 DFT标签→三势拟合→势和解析导数求值。
-`model.joint` **不能**作为旧局域 `.au` 或五记录 `V_func_tmp` 使用。
+新版 `V_func_tmp` **不兼容**旧五记录同名文件或局域 `.au` 格式，不能作为旧 `fit_new` 的重启输入。
 接入完整Hamiltonian需要按新特征投影，并在转矩中加入标量导数和所有Ni的 `A†dN A`；旧单Ni三系数RVR接口不能直接吞入40组特征。
+新三势 `V_func_tmp → RVR → H_sk/转矩` 的接口衔接尚未完成；改名不代表已打通。
