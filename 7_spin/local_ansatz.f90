@@ -105,28 +105,24 @@ contains
  enddo
  enddo
  end subroutine
- subroutine assemble(m,L,k,e,ueff,hcv,hb,hu,ke,pg,nsite,n_override,tk,tke,spin_scale)
+ subroutine background_projectors(m,L,k,hcv,pg)
  type(frozen_model),intent(in)::m
  integer,intent(in)::L
- real(dp),intent(in)::k(3),e(:,:),ueff
- complex(dp),intent(out)::hcv(:,:),hb(:,:),hu(:,:),ke(270,270),pg(:,:,0:,0:),nsite(:,:,:)
- complex(dp),intent(in),optional::n_override(:,:,:),tke(:,:,:)
- type(tensor_kernel),intent(in),optional::tk
- real(dp),intent(in),optional::spin_scale
- complex(dp),allocatable::hcq(:,:,:),pq(:,:,:),a(:,:),va(:,:)
- complex(dp)::hc(30,30),p(5,30),v(10,10),phase
+ real(dp),intent(in)::k(3)
+ complex(dp),intent(out)::hcv(:,:),pg(:,:,0:,0:)
+ complex(dp),allocatable::hcq(:,:,:),pq(:,:,:)
+ complex(dp)::hc(30,30),p(5,30),phase
  real(dp)::q(3)
  integer::x,y,t,xx,yy,s,d(2),i,j,u,iq,nc,nd
  nc=L*L;nd=60*nc
- call require(size(e,2)==nc,'Spin texture size mismatch')
- allocate(hcq(30,30,nc),pq(5,30,nc),a(10,nd),va(10,nd))
+ allocate(hcq(30,30,nc),pq(5,30,nc))
  do x=0,L-1
  do y=0,L-1
  iq=x*L+y+1;q=[(x+k(1))/L,(y+k(2))/L,k(3)]
  call interpolate(m,q,hc,p);hcq(:,:,iq)=hc;pq(:,:,iq)=p
  enddo
  enddo
- pg=0;hcv=0;hb=0;hu=0
+ pg=0;hcv=0
  ! Finite inverse Bloch transform: the same normalized IFFT and twist as the reference.
  do x=0,L-1
  do y=0,L-1
@@ -161,6 +157,23 @@ contains
  enddo
  enddo
  enddo
+ end subroutine
+ subroutine assemble(m,L,k,e,ueff,hcv,hb,hu,ke,pg,nsite,n_override,tk,tke,spin_scale)
+ type(frozen_model),intent(in)::m
+ integer,intent(in)::L
+ real(dp),intent(in)::k(3),e(:,:),ueff
+ complex(dp),intent(out)::hcv(:,:),hb(:,:),hu(:,:),ke(270,270),pg(:,:,0:,0:),nsite(:,:,:)
+ complex(dp),intent(in),optional::n_override(:,:,:),tke(:,:,:)
+ type(tensor_kernel),intent(in),optional::tk
+ real(dp),intent(in),optional::spin_scale
+ complex(dp),allocatable::a(:,:),va(:,:)
+ complex(dp)::v(10,10)
+ integer::nc,nd,x,y,t,i
+ nc=L*L;nd=60*nc
+ call require(size(e,2)==nc,'Spin texture size mismatch')
+ allocate(a(10,nd),va(10,nd))
+ call background_projectors(m,L,k,hcv,pg)
+ hb=0;hu=0
  call plane_kernel(m,k(3),ke)
  do x=0,L-1
  do y=0,L-1

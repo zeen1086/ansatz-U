@@ -60,10 +60,7 @@ contains
  real(dp),intent(in)::e(3,4),de(3,4)
  real(dp),intent(out)::field(:,:),dfield(:,:)
  complex(dp),intent(out)::n(10,10,4),dn(10,10,4)
- type(crystal_action)::group(64)
  real(dp)::s(8),b(3,40),v(3,12),x(3,6),chi(4),ds(8),db(3,40),dv(3,12),dx(3,6),dc(4)
- complex(dp)::base(10,10),der(10,10),d(10,10)
- integer::g,site
  call require(size(field,1)==product(m%grid).and.size(field,2)==4,'Joint field output shape mismatch')
  call require(all(ieee_is_finite(e)).and.all(ieee_is_finite(de)),'Nonfinite joint spin input')
  call require(maxval(abs(sum(e**2,dim=1)-1))<1e-12_dp,'Joint spin inputs must be unit directions')
@@ -71,6 +68,16 @@ contains
  field(:,1)=matmul(s,m%scalar);field(:,2:4)=transpose(matmul(b,m%magnetic))
  dfield(:,1)=matmul(ds,m%scalar);dfield(:,2:4)=transpose(matmul(db,m%magnetic))
  call require(all(ieee_is_finite(field)).and.all(ieee_is_finite(dfield)),'Nonfinite joint field/derivative')
+ call joint_occupations(m,e,de,n,dn)
+ end subroutine
+ subroutine joint_occupations(m,e,de,n,dn)
+ type(joint_potential),intent(in)::m
+ real(dp),intent(in)::e(3,4),de(3,4)
+ complex(dp),intent(out)::n(10,10,4),dn(10,10,4)
+ type(crystal_action)::group(64)
+ real(dp)::s(8),b(3,40),v(3,12),x(3,6),chi(4),ds(8),db(3,40),dv(3,12),dx(3,6),dc(4)
+ complex(dp)::base(10,10),der(10,10),d(10,10)
+ integer::g,site
  call crystal_group(m%grid,group);n=0;dn=0
  do g=1,64
   call spin_features(e(:,group(g)%perm),de(:,group(g)%perm),s,b,v,x,chi,ds,db,dv,dx,dc)

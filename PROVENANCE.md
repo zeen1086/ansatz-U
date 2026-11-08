@@ -20,4 +20,16 @@ LaNiO₂ 分支来源对应：
 
 四自旋三势入口 `joint_features/joint_model` 对应既有 `covariant_basis.py`、`b_features.py` 中的 scalar8、B12+28、复数N及64个晶体作用。`joint_npy` 原生读取既有DFT标签，`joint_svd/fit_joint` 为新带权SVD目标，`eval_joint` 输出三势及解析角度导数，`run_joint.sh` 仅解包、构建和启动；生产链不调用Python。该目标按用户选择实现，不继承旧算符损失的数值资格或训练结果。
 
-三势参数默认名由 `model.joint` 改为 `V_func_tmp`，求值文件沿用 `V_fit/dV_fit/N_VU_fit/dN_dVU_fit` 命名；源码名称、格式和数值算法保留。新版 `V_func_tmp` 与旧五记录同名模型不兼容，新特征到旧RVR的衔接尚未完成。
+三势参数默认名由 `model.joint` 改为 `V_func_tmp`，求值文件沿用 `V_fit/dV_fit/N_VU_fit/dN_dVU_fit` 命名；新版格式与旧五记录同名模型不兼容。
+
+三势后续阶段沿用原名称，在 `joint/` 子目录区分新格式：
+
+| 原阶段/共用函数 | 新入口或扩展 | 功能 |
+|---|---|---|
+| `cal_RVR_split` | `6_RVR/joint/cal_RVR_split.f90`、`joint_rvr.f90` | 沿用逆平移Wannier索引及网格收缩，读取新版V_func_tmp，投影标量8/B40/固定标量参考核 |
+| `combine` | `6_RVR/joint/combine.f90` | 验证分行绑定和Hermiticity，生成新版B_general并保留原背景/projector与N系数 |
+| `local_ansatz::assemble` | 共用 `background_projectors` | 提取原H0+固定Hv与p_R的插值/周期相位，无数值定义改动；原局域入口仍调用同一函数 |
+| `cal_Hsk` | `7_spin/joint/cal_Hsk.f90` | 组装标量势差、B及全四Ni HU；同一H下读出三项转矩、能带/EF及Φ |
+| `run_ansatzU` | 新增显式 `joint_rvr_path` | 选择四自旋原2×2胞后端；拒绝重复背景/B输入或隐式大胞N延拓 |
+
+primitive30读取映射直接遵循 `5_wannier/make_wan/make_wan_fun_mpi.f90` 的 `+ikR` 输出和原RVR的逆平移约定；不重新Wannier化、不增加幅值因子。新阶段的生产数值均为Fortran/BLAS/LAPACK，未改原拟合特征或权重。

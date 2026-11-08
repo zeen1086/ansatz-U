@@ -1,5 +1,6 @@
 program run_ansatzU
  use local_ansatz
+ use joint_spin, only: run_joint_spin
  implicit none
  type(frozen_model)::m
  type(tensor_kernel)::tk
@@ -10,11 +11,12 @@ program run_ansatzU
  complex(dp),allocatable::tke(:,:,:)
  integer::L=2,perturb_site(2)=[0,0],u,ios,nk,nread,nc,nd,i,j,x,y,k,pass,passes,t,band
  character(1024)::input='',model_path='',texture_path='',kpoints_path='',readouts_path='',output_prefix=''
+ character(1024)::joint_rvr_path=''
  character(16)::mode='torque'
  real(dp)::ueff=1._dp,sigma=.05_dp,electrons_per_ni=21._dp,delta=0._dp,mu,count,band_energy,seconds,start
  logical::dump_matrices=.false.
  namelist /run/ L,model_path,texture_path,kpoints_path,readouts_path,output_prefix, &
- ueff,sigma,electrons_per_ni,mode,delta,perturb_site,dump_matrices,tensor_path,tensor_range,tensor_spin_scale,tensor_unit
+ ueff,sigma,electrons_per_ni,mode,delta,perturb_site,dump_matrices,tensor_path,tensor_range,tensor_spin_scale,tensor_unit,joint_rvr_path
  real(dp),allocatable::e(:,:),axis(:,:),spin(:,:),q(:,:),w(:),ev(:,:),f(:,:),der(:,:,:,:),tau(:,:,:)
  integer,allocatable::sites(:,:)
  complex(dp),allocatable::hcv(:,:),hb(:,:),hu(:,:),h(:,:),vec(:,:),pg(:,:,:,:),ns(:,:,:),frames(:,:,:),db(:,:),du(:,:)
@@ -29,6 +31,13 @@ program run_ansatzU
  call require(ios==0,'Cannot open run namelist: '//trim(msg))
  read(u,nml=run,iostat=ios,iomsg=msg);close(u)
  call require(ios==0,'Invalid run namelist: '//trim(msg))
+ if(len_trim(joint_rvr_path)>0) then
+  call require(L==2,'The nonrigid four-spin joint model supports its original 2x2 cell only')
+  call require(len_trim(model_path)==0.and.len_trim(tensor_path)==0, &
+   'Joint B_general already contains the background/projector; omit model_path and tensor_path')
+  call run_joint_spin(trim(joint_rvr_path),trim(texture_path),trim(kpoints_path),trim(readouts_path), &
+   trim(output_prefix),ueff,sigma,electrons_per_ni,trim(mode),delta,perturb_site,dump_matrices)
+ else
  call require(L>0.and.L<=100,'L must be positive and <=100 (dense solver; memory is caller responsibility)')
  call require(len_trim(model_path)>0.and.len_trim(texture_path)>0.and.len_trim(kpoints_path)>0.and. &
  len_trim(readouts_path)>0.and.len_trim(output_prefix)>0,'All external paths and output_prefix must be explicit')
@@ -181,6 +190,7 @@ program run_ansatzU
  endif
  call cpu_time(seconds)
  write(*,'(a,es14.6)') 'Completed Fortran ansatz+U, CPU seconds=',seconds-start
+ endif
 contains
  subroutine dump(path,a)
  character(*),intent(in)::path

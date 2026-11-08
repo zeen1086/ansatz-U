@@ -14,9 +14,13 @@ LaNiO₂ 的 Fortran 势拟合、Wannier/RVR、Hamiltonian、能带和转矩工�
 
 `*_lanio2.f90` 保留原 LaNiO₂ 阶段接口。`parameter` 用于公共工具和DFT模板；+U运行参数来自 `examples` 中的namelist。二者各有构建入口，互不覆盖。
 
-四自旋的标量、B和非刚性Hubbard三势拟合见 [原生 Fortran/Shell 入口](4_potential/fit/README.md)。`make joint BUILD=/absolute/build` 构建 `fit_joint/eval_joint`；shell直接解包已有DFT标签，由Fortran读取、带权SVD拟合和求解析导数。采用 scalar8、B12+28、完整复数N特征；这是显式原始标签损失，未复现旧Python的投影算符联合损失。新三势参数默认写入 `V_func_tmp`，保留新版格式头及完整系数，**不兼容旧五记录同名文件**或局域 `.au` 模型；新特征到RVR的接口尚未完成。求值默认输出 `V_fit`、`dV_fit`、`N_VU_fit`、`dN_dVU_fit`，单位和布局见上述入口说明。
+四自旋的标量、B和非刚性Hubbard三势拟合见 [原生 Fortran/Shell 入口](4_potential/fit/README.md)。`make joint BUILD=/absolute/build` 构建 `fit_joint/eval_joint`；shell直接解包已有DFT标签，由Fortran读取、带权SVD拟合和求解析导数。采用 scalar8、B12+28、完整复数N特征；这是显式原始标签损失，未复现旧Python的投影算符联合损失。新三势参数默认写入 `V_func_tmp`，**不兼容旧五记录同名文件**或局域 `.au` 模型。网格求值仍输出 `V_fit/dV_fit/N_VU_fit/dN_dVU_fit`。
 
-## LaNiO₂ ansatz+U
+三势完整主线已接通：[V_func_tmp → RVR → H → 三项转矩/Φ](6_RVR/joint/README.md)。`make joint-rvr BUILD=/absolute/build` 构建原阶段命名的 `joint/cal_RVR_split`、`joint/combine` 及 `ansatzU`。分别一次投影标量8、B40及实际固定标量参考核，原背景/projector和N系数封装在新版 `B_general`。后续纹理和K点复用RVR；`joint_rvr_path` 选择四Ni原胞入口，三项读出为 `tau_v+tau_B+tau_U`，使用同一完整H和占据。
+
+背景明确为 `hc_R+[Hv(e)-Hv_ref]+HB(e)+HU(e)`；必须提供实际用于hc_R的固定标量参考场及共同gauge来源，不能把hc_R当作纯H0。该入口保持原四自旋2×2模型，不自动延拓非刚性N到更大超胞。参数模板在 `examples/6_RVR/joint_projection.nml`、`examples/7_spin/joint_run.nml`。
+
+## 原局域冻结入口
 
 需要 gfortran 与 BLAS/LAPACK；MPI 程序另外需要 MPI 编译器。macOS 默认链接 Accelerate，Linux 默认链接 BLAS/LAPACK。
 

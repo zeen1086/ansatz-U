@@ -13,14 +13,25 @@ endif
 CORE = $(ROOT)/common/numerics.f90 $(ROOT)/6_RVR/frozen_io.f90 $(ROOT)/6_RVR/tensor_rvr.f90 $(ROOT)/7_spin/local_ansatz.f90
 JOINT = $(ROOT)/common/numerics.f90 $(ROOT)/4_potential/fit/joint_features.f90 $(ROOT)/4_potential/fit/joint_npy.f90 $(ROOT)/4_potential/fit/joint_model.f90 $(ROOT)/4_potential/fit/joint_svd.f90
 JOINT_OBJECTS = $(addprefix $(BUILD)/joint/,numerics.o joint_features.o joint_npy.o joint_model.o joint_svd.o)
-.PHONY: all legacy mpi joint clean
-all: $(BUILD)/ansatzU legacy joint
+RUNTIME = $(filter-out $(ROOT)/common/numerics.f90,$(CORE)) $(ROOT)/6_RVR/joint_rvr.f90 $(ROOT)/7_spin/joint/cal_Hsk.f90
+RUNTIME_OBJECTS = $(addprefix $(BUILD)/joint_runtime/,frozen_io.o tensor_rvr.o local_ansatz.o joint_rvr.o cal_Hsk.o)
+.PHONY: all legacy mpi joint joint-rvr clean
+all: $(BUILD)/ansatzU legacy joint joint-rvr
 $(BUILD):
 	@case "$(abspath $(BUILD))/" in "$(ROOT)/"*) echo 'BUILD must be outside the source delivery'; exit 1;; esac
 	mkdir -p $(BUILD)
-$(BUILD)/ansatzU: $(CORE) $(ROOT)/7_spin/run_ansatzU.f90 | $(BUILD)
-	cd $(BUILD) && $(FC) $(FFLAGS) -J. $(CORE) $(ROOT)/7_spin/run_ansatzU.f90 -o ansatzU $(LIBS)
+$(BUILD)/ansatzU: $(ROOT)/7_spin/run_ansatzU.f90 $(BUILD)/joint_runtime/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/joint_runtime -I$(BUILD)/joint $< $(RUNTIME_OBJECTS) $(JOINT_OBJECTS) -o $@ $(LIBS)
 joint: $(BUILD)/fit_joint $(BUILD)/eval_joint
+joint-rvr: $(BUILD)/ansatzU $(BUILD)/joint/cal_RVR_split $(BUILD)/joint/combine
+$(BUILD)/joint_runtime/.built: $(RUNTIME) $(BUILD)/joint/.built
+	mkdir -p $(BUILD)/joint_runtime
+	cd $(BUILD)/joint_runtime && $(FC) $(FFLAGS) -I$(BUILD)/joint -J. -c $(RUNTIME)
+	touch $@
+$(BUILD)/joint/cal_RVR_split: $(ROOT)/6_RVR/joint/cal_RVR_split.f90 $(BUILD)/joint_runtime/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/joint_runtime -I$(BUILD)/joint $< $(RUNTIME_OBJECTS) $(JOINT_OBJECTS) -o $@ $(LIBS)
+$(BUILD)/joint/combine: $(ROOT)/6_RVR/joint/combine.f90 $(BUILD)/joint_runtime/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/joint_runtime -I$(BUILD)/joint $< $(RUNTIME_OBJECTS) $(JOINT_OBJECTS) -o $@ $(LIBS)
 $(BUILD)/joint/.built: $(JOINT) | $(BUILD)
 	mkdir -p $(BUILD)/joint
 	cd $(BUILD)/joint && $(FC) $(FFLAGS) -J. -c $(JOINT)

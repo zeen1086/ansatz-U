@@ -83,5 +83,4 @@ N/VU及其导数各保留两个 `(10,10,4)` complex128记录，包含全部轨�
 
 本入口完成 DFT标签→三势拟合→势和解析导数求值。
 新版 `V_func_tmp` **不兼容**旧五记录同名文件或局域 `.au` 格式，不能作为旧 `fit_new` 的重启输入。
-接入完整Hamiltonian需要按新特征投影，并在转矩中加入标量导数和所有Ni的 `A†dN A`；旧单Ni三系数RVR接口不能直接吞入40组特征。
-新三势 `V_func_tmp → RVR → H_sk/转矩` 的接口衔接尚未完成；改名不代表已打通。
+后续使用 [新版RVR与完整Hamiltonian入口](../../6_RVR/joint/README.md)：`cal_RVR_split/combine` 分别投影标量8、B40和实际固定标量参考场；`ansatzU` 读取新版 `B_general`，输出标量/B/U及总转矩和Φ。原单Ni三系数RVR仍保留，但不能直接吞入40组特征；新旧同名文件由格式头区分。

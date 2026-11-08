@@ -1,0 +1,15 @@
+&joint_projection
+ model_path='/explicit/external/fit/V_func_tmp'
+ frozen_path='/explicit/external/local_model.au'
+ reference_potential_path='/explicit/external/fixed_scalar_reference_V_HYC_dp'
+ background='hc_plus_fixed_Hv_no_HU'
+ reference_scalar_id='actual_scalar_used_in_the_frozen_hc_R'
+ gauge_id='common_Wannier_gauge_and_orbital_shift_id'
+ wannier_layout='primitive30'
+ wan_dir='/explicit/external/make_wan/wan_data'
+ support_path='/explicit/external/make_wan'
+ primitive_translations_path='/explicit/external/primitive_translations.dat'
+ translations_path='/explicit/external/four_cell_translations.dat'
+ rvr_dir='/explicit/new_run/6_RVR'
+ grid_weight=1d0
+/
