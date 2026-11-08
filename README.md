@@ -14,6 +14,8 @@ LaNiO₂ 的 Fortran 势拟合、Wannier/RVR、Hamiltonian、能带和转矩工�
 
 `*_lanio2.f90` 保留原 LaNiO₂ 阶段接口。`parameter` 用于公共工具和DFT模板；+U运行参数来自 `examples` 中的namelist。二者各有构建入口，互不覆盖。
 
+四自旋的标量、B和非刚性Hubbard三势拟合见 [原生 Fortran/Shell 入口](4_potential/fit/README.md)。`make joint BUILD=/absolute/build` 构建 `fit_joint/eval_joint`；shell直接解包已有DFT标签，由Fortran读取、带权SVD拟合和求解析导数。采用 scalar8、B12+28、完整复数N特征；这是显式原始标签损失，未复现旧Python的投影算符联合损失。新 `model.joint` 与下面的局域 `.au` 模型格式不同。
+
 ## LaNiO₂ ansatz+U
 
 需要 gfortran 与 BLAS/LAPACK；MPI 程序另外需要 MPI 编译器。macOS 默认链接 Accelerate，Linux 默认链接 BLAS/LAPACK。

@@ -11,13 +11,24 @@ else
 LIBS ?= -llapack -lblas
 endif
 CORE = $(ROOT)/common/numerics.f90 $(ROOT)/6_RVR/frozen_io.f90 $(ROOT)/6_RVR/tensor_rvr.f90 $(ROOT)/7_spin/local_ansatz.f90
-.PHONY: all legacy mpi clean
-all: $(BUILD)/ansatzU legacy
+JOINT = $(ROOT)/common/numerics.f90 $(ROOT)/4_potential/fit/joint_features.f90 $(ROOT)/4_potential/fit/joint_npy.f90 $(ROOT)/4_potential/fit/joint_model.f90 $(ROOT)/4_potential/fit/joint_svd.f90
+JOINT_OBJECTS = $(addprefix $(BUILD)/joint/,numerics.o joint_features.o joint_npy.o joint_model.o joint_svd.o)
+.PHONY: all legacy mpi joint clean
+all: $(BUILD)/ansatzU legacy joint
 $(BUILD):
 	@case "$(abspath $(BUILD))/" in "$(ROOT)/"*) echo 'BUILD must be outside the source delivery'; exit 1;; esac
 	mkdir -p $(BUILD)
 $(BUILD)/ansatzU: $(CORE) $(ROOT)/7_spin/run_ansatzU.f90 | $(BUILD)
 	cd $(BUILD) && $(FC) $(FFLAGS) -J. $(CORE) $(ROOT)/7_spin/run_ansatzU.f90 -o ansatzU $(LIBS)
+joint: $(BUILD)/fit_joint $(BUILD)/eval_joint
+$(BUILD)/joint/.built: $(JOINT) | $(BUILD)
+	mkdir -p $(BUILD)/joint
+	cd $(BUILD)/joint && $(FC) $(FFLAGS) -J. -c $(JOINT)
+	touch $@
+$(BUILD)/fit_joint: $(ROOT)/4_potential/fit/fit_joint.f90 $(BUILD)/joint/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/joint $< $(JOINT_OBJECTS) -o $@ $(LIBS)
+$(BUILD)/eval_joint: $(ROOT)/4_potential/fit/eval_joint.f90 $(BUILD)/joint/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/joint $< $(JOINT_OBJECTS) -o $@ $(LIBS)
 legacy: $(BUILD)/fit_new $(BUILD)/rvr_combine $(BUILD)/rearrange_HR $(BUILD)/tensor_Hsk $(BUILD)/tensor_Hsk_AFM $(BUILD)/combine
 $(BUILD)/fit_new: $(ROOT)/4_potential/fit/fit_mask.f90 $(ROOT)/4_potential/fit/fit_new.f90 | $(BUILD)
 	cd $(BUILD) && $(FC) $(LEGACYFLAGS) -J. $^ -o $@

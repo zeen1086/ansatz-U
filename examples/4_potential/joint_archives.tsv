@@ -1,0 +1,4 @@
+# name	weight	anchor	unit	archive_path
+fm	1.0	1	Ry	/absolute/DFT/fm/labels.npz
+neel	1.0	1	Ry	/absolute/DFT/neel/labels.npz
+noncollinear	1.0	0	Ry	/absolute/DFT/noncollinear/labels.npz

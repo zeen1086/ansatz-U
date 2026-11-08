@@ -1,0 +1,6 @@
+&joint_eval_control
+ ueff=1d0,
+ derivative_site=1,
+ occupation_tolerance=1d-8,
+ enforce_occupation_bounds=.true.
+/
