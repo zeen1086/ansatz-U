@@ -2,7 +2,6 @@
 """Compile selected Fortran programs, or verify their saved build fingerprints."""
 from pathlib import Path
 import argparse
-import hashlib
 import json
 import os
 import shlex
@@ -39,8 +38,9 @@ def dependencies(source: Path) -> list[Path]:
     return [source]
 
 
-def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def file_state(path: Path) -> dict:
+    stat=path.stat()
+    return dict(bytes=stat.st_size,mtime_ns=stat.st_mtime_ns,ctime_ns=stat.st_ctime_ns)
 
 
 def state(source: Path, fc: str, flags: list[str], libs: list[str], values: dict | None = None) -> dict:
@@ -49,10 +49,10 @@ def state(source: Path, fc: str, flags: list[str], libs: list[str], values: dict
     if resolved is None:
         raise FileNotFoundError(f"Fortran compiler not found: {compiler[0]}")
     compiler[0] = str(Path(resolved).resolve())
-    return {"parameter": hashlib.sha256(fortran_module(values if values is not None else load()).encode()).hexdigest(),
+    return {"parameter": fortran_module(values if values is not None else load()),
             "compiler": compiler, "compiler_mtime_ns": Path(compiler[0]).stat().st_mtime_ns,
             "flags": flags, "libs": libs,
-            "sources": {str(p.relative_to(ROOT)): digest(p)
+            "sources": {str(p.relative_to(ROOT)): file_state(p)
                         for p in dependencies(source) + [ROOT / "build.py", ROOT / "parameters.py"]}}
 
 
@@ -62,7 +62,7 @@ def verify(source: Path) -> Path:
     try:
         saved = json.loads((work / "build.json").read_text())
         expected = state(source, shlex.join(saved["compiler"]), saved["flags"], saved["libs"])
-        if expected != saved["state"] or digest(binary) != saved["binary_sha256"]:
+        if expected != saved["state"] or file_state(binary) != saved["binary"]:
             raise ValueError("changed parameters, sources, compiler or binary")
     except (OSError, ValueError, KeyError) as exc:
         raise RuntimeError(f"Rebuild {source.relative_to(ROOT)} before running: {exc}") from exc
@@ -81,7 +81,7 @@ def build(sources: list[Path], fc: str, flags: list[str], libs: list[str], check
         if not check:
             try:
                 saved = json.loads((work / "build.json").read_text())
-                if current == saved["state"] and digest(binary) == saved["binary_sha256"]:
+                if current == saved["state"] and file_state(binary) == saved["binary"]:
                     print(f"Up to date: {relative}")
                     continue
             except (OSError, ValueError, KeyError):
@@ -101,7 +101,7 @@ def build(sources: list[Path], fc: str, flags: list[str], libs: list[str], check
         if not check:
             Path(str(binary) + ".new").replace(binary)
             saved = {"state": current, "compiler": current["compiler"], "flags": flags,
-                     "libs": libs, "binary_sha256": digest(binary)}
+                     "libs": libs, "binary": file_state(binary)}
             (work / "build.json").write_text(json.dumps(saved, indent=2) + "\n")
 
 

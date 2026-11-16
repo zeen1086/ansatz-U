@@ -1,7 +1,6 @@
 from pathlib import Path
 import contextlib
 import importlib.util
-import hashlib
 import io
 import json
 import os
@@ -30,7 +29,7 @@ rvr = module("prepare_rvr", "5_wannier/make_wan/prepare_rvr.py")
 
 
 class WorkflowTests(unittest.TestCase):
-    def test_qe_installer_rejects_modified_tree(self):
+    def test_qe_installer_rejects_wrong_file_size(self):
         installer=module("qe_install", "0_QE/install.py")
         with tempfile.TemporaryDirectory() as directory:
             base=Path(directory); overlay=base/"overlay"; target=base/"qe"
@@ -38,7 +37,7 @@ class WorkflowTests(unittest.TestCase):
             (overlay/"magnetic").mkdir()
             target.mkdir()
             (overlay/"common/source.f90").write_text("modified source\n")
-            (overlay/"upstream.json").write_text(json.dumps({"files":{"source.f90":hashlib.sha256(b"base\n").hexdigest()}}))
+            (overlay/"upstream.json").write_text(json.dumps({"files":{"source.f90":5}}))
             (target/"source.f90").write_text("user changes\n")
             with patch.object(installer,"HERE",overlay):
                 with self.assertRaises(ValueError): installer.install(target,"magnetic")

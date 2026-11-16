@@ -14,7 +14,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from local_vfunc import write_coeff, digest, export_background
+from local_vfunc import write_coeff, export_background
 
 
 def put(path, value):
@@ -58,7 +58,7 @@ def background(path, h0, projector):
         f.write(np.asarray(rr.T,'<i4').tobytes(order='F'))
         for a in (h.transpose(1,2,0),p.transpose(1,2,0),np.zeros((810,810),complex),np.zeros((10,10),complex)):
             f.write(np.asarray(a,'<c16').tobytes(order='F'))
-    put(Path(str(path)+'.json'),dict(kind='pure_H0_no_local_fields_no_HU',sha256=digest(path)))
+    put(Path(str(path)+'.json'),dict(kind='pure_H0_no_local_fields_no_HU',background_id='fixture-background'))
 
 
 class BackgroundExportTests(unittest.TestCase):
@@ -76,6 +76,8 @@ class BackgroundExportTests(unittest.TestCase):
                     write(f,np.eye(30),'<c16');write(f,np.eye(30),'<c16')
             report=export_background(source,r/'pure.au')
             self.assertLess(report['H0_source_roundtrip_max_eV'],1e-10)
+            self.assertEqual(len(report['background_id']),64)
+            self.assertEqual(set(report),{'kind','source','background_id','transformation','H0_source_roundtrip_max_eV','excluded'})
             with (r/'pure.au').open('rb') as f:
                 self.assertEqual(f.read(16),b'LANIO2_AU_V1    ');f.read(32+12*729)
                 hr=np.frombuffer(f.read(16*900*729),'<c16').reshape(30,30,729,order='F')
@@ -152,7 +154,7 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
         assert 'SPATIAL_FIELDS_REUSED' in call(binary/'rvr','prepare',control)
         call(binary/'rvr','combine',control,'--keep-intermediates')
         assert not (project/'B_general.partial').exists()
-        reference=digest(project/'B_general')
+        reference=(project/'B_general').read_bytes()
         assert cache.is_file() and all(p.is_file() for p in rows)
         if reference_binary is not None:
             baseline=r/'baseline';baseline.mkdir();old_control=r/'baseline.nml'
@@ -160,12 +162,12 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
             call(reference_binary/'cal_RVR_split',old_control,0)
             for i in range(1,31):call(reference_binary/'cal_RVR_split',old_control,i)
             call(reference_binary/'combine',old_control)
-            assert digest(baseline/'B_general')==reference
+            assert (baseline/'B_general').read_bytes()==reference
         # Resume after publication and an interrupted cleanup, with the cache already gone.
         cache.unlink();rows[0].unlink();(project/'unrelated.txt').write_text('preserve this file')
         stamp=(project/'B_general').stat().st_mtime_ns
         call(binary/'rvr','combine',control)
-        assert digest(project/'B_general')==reference
+        assert (project/'B_general').read_bytes()==reference
         assert {p.name for p in project.iterdir()}=={'B_general','unrelated.txt'}
         for command in ('prepare','project','combine'):
             assert 'B_GENERAL_REUSED' in call(binary/'rvr',command,control)

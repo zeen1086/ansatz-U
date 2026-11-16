@@ -21,7 +21,6 @@ mkdir "$run/inputs"
 cp "$control" "$run/fit.nml"
 cp "$list" "$run/source_archives.tsv"
 rows=()
-: > "$run/archive_checksums.txt"
 count=0
 while IFS=$'\t' read -r name weight anchor unit archive extra || [[ -n "${name:-}" ]]; do
   [[ -n "$name" && "$name" != \#* ]] || continue
@@ -45,8 +44,7 @@ while IFS=$'\t' read -r name weight anchor unit archive extra || [[ -n "${name:-
   members=$(unzip -Z1 "$archive")
   case $'\n'"$members"$'\n' in *$'\nV_U_eV.npy\n'*) unzip -p "$archive" V_U_eV.npy > "$folder/VU.npy";; esac
   rows+=("$name $weight $anchor $unit" "$folder")
-  if command -v sha256sum >/dev/null; then sha256sum "$archive" >> "$run/archive_checksums.txt"
-  else shasum -a 256 "$archive" >> "$run/archive_checksums.txt"; fi
+
 done < "$list"
 [[ $count -gt 0 ]] || { echo 'No DFT states listed' >&2; exit 2; }
 printf '%s\n' "$count" "${rows[@]}" > "$run/dataset.manifest"

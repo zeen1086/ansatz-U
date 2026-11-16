@@ -15,12 +15,11 @@ class OutputPolicyTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             root=Path(tmp);model='a'*64;basis='b'*64
             background=root/'pure.au';background.write_bytes(b'background')
-            sha=local_vfunc.digest(background)
             Path(str(background)+'.json').write_text(json.dumps(
-                dict(kind='pure_H0_no_local_fields_no_HU',sha256=sha)))
+                dict(kind='pure_H0_no_local_fields_no_HU',background_id='fixture-background')))
             rvr=root/'B_general'
             rvr.write_bytes(b'LANIO2_LRVR_V2  '+bytes(32)+model.encode()+basis.encode())
-            (root/'PROJECTION.json').write_text(json.dumps(dict(basis_id=basis,background_sha256=sha)))
+            (root/'PROJECTION.json').write_text(json.dumps(dict(basis_id=basis,background_id='fixture-background')))
 
             def evaluate(directory,structure,out,sites,step,**options):
                 out.mkdir()

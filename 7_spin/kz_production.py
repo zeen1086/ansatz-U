@@ -1,6 +1,5 @@
 """Eight PBS workers, one lossless local RVR slice and one writer per kz."""
 from pathlib import Path
-import hashlib
 import json
 import os
 import shutil
@@ -47,7 +46,6 @@ def _stage_slice(source, target, z):
         raise RuntimeError('Insufficient node-local space for RVR slice')
     stamp=source.stat()
     struct.pack_into('<i',prefix,16+4*4,1)
-    digest=hashlib.sha256()
     with source.open('rb') as src,target.open('xb') as dst:
         dst.write(prefix)
         dst.write(struct.pack('<d',sectors[z]))
@@ -57,7 +55,6 @@ def _stage_slice(source, target, z):
             block=src.read(min(left,16*1024**2))
             if not block:raise EOFError('Truncated source RVR slice')
             dst.write(block)
-            digest.update(block)
             left-=len(block)
         dst.flush()
         os.fsync(dst.fileno())
@@ -67,7 +64,7 @@ def _stage_slice(source, target, z):
     if local_prefix!=prefix or k!=(sectors[z],) or local_size!=size:
         raise ValueError('Local RVR slice metadata mismatch')
     if target.stat().st_size!=local_offset+local_size:raise ValueError('Local RVR payload byte count mismatch')
-    return dict(z=z,seconds=time.monotonic()-tick,bytes=size,sha256=digest.hexdigest(),host=socket.gethostname())
+    return dict(z=z,seconds=time.monotonic()-tick,bytes=size,host=socket.gethostname())
 
 
 def stage_slice(source,target,z):

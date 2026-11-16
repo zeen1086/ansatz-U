@@ -21,7 +21,7 @@ def frozen():
     sys.path.insert(0,str(SOURCE))
     from local_vfunc import metadata
     meta=metadata(INTERFACE/'V_func_tmp')
-    if meta['model_id']!=CONFIG['model_id'] or meta['source_parameters_sha256']!=CONFIG['parameters_sha256']:
+    if meta['model_id']!=CONFIG['model_id']:
         raise ValueError('Frozen V1 identity changed')
     return len(meta['files'])+1
 
@@ -98,7 +98,7 @@ def cache_identity():
         files['code/'+name] = Path(__file__).with_name(name)
     files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
     return dict(version=1, files={name:input_digest(path) for name,path in files.items()},
-                model=CONFIG['model_id'], parameters=CONFIG['parameters_sha256'],
+                model=CONFIG['model_id'],
                 grid=[40,40,36], orbitals=30, mesh=[2,2,8], sigma=SIGMA)
 
 

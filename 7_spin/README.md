@@ -96,7 +96,7 @@ export ANSATZ_RUN_CONFIG=/absolute/run/production.json
 配置中的路径及数据约定：
 
 - `python`：执行主机已有解释器；`native_build`：含 `local/cal_Hsk` 的构建根目录。
-- `interface`：含 `V_func_tmp/V_FUNC.json` 的目录；模型及参数 ID 必须与模板中的冻结 V1 一致。
+- `interface`：含 `V_func_tmp/V_FUNC.json` 的目录；将模板中全零占位的 `model_id` 替换为 `V_FUNC.json` 的实际 ID。
 - `input_root`：含 `inputs/Lxx/structure.npz`、`inputs/Lxx/CASE.json`。
   CASE 沿用生产配对、角度和站点定义；超胞及 Ni 顺序见 local 接口。
 - `references`：共同 Wannier 的 `data.npz`、`k_0001.npz ...` 和 `wr_0001.npy ...`。
@@ -200,7 +200,7 @@ export ANSATZ_RUN_ID="$(/absolute/python -c 'import uuid; print(uuid.uuid4().hex
 
 结果文件先写临时文件，再原子替换。QE 阶段使用全新临时目录，输出验证后发布；若原生阶段已完成而能量 JSON 未写完，重跑时直接补写摘要。带自由能流程只在整个构型的 `TORQUE.json` 发布后清理本征态等临时数据。
 
-`INPUTS.json` 绑定结构/spin、CASE、模型、基底、网格/步长及相关代码；系数和原生输出另外记录输入与文件校验。缺少 `INPUTS.json` 的已有目录会打印 NOTE 并写入当前身份；已有 manifest 与当前身份不同仍报错，需要使用相应输入或新的目录。文件身份采用大小/时间戳，结构/spin 使用实际数组描述，不执行全文件 SHA256 校验。旧哈希身份与新记录不同也不会被静默覆盖。
+`INPUTS.json` 绑定结构/spin、CASE、模型、基底、网格/步长及相关代码；系数和原生输出另外记录输入与文件校验。缺少 `INPUTS.json` 的已有目录会打印 NOTE 并写入当前身份；已有 manifest 与当前身份不同仍报错，需要使用相应输入或新的目录。文件身份采用大小/时间戳，结构/spin 使用实际数组描述，不记录或校验文件内容摘要。旧哈希身份与新记录不同也不会被静默覆盖。
 
 失败留存的 `*.incomplete-*`、进程被强制终止留下的隐藏临时目录，不是可复用检查点。确认没有活动写入者后可自行清理，正常重跑无需先删除它们。运行过程中保持输入和缓存不可修改。
 
@@ -255,7 +255,7 @@ H0/projector，原生 H 组装和转矩收缩也读取对应基底的缓存。H�
 本征态、化学势、密度、能量和转矩仍按 spin 重算并保存到 `spins/`。
 单构型 `local_vfunc.py cal_Hsk` 和独立带自由能入口保留原来的直接组装方式。
 
-输入身份使用文件大小、mtime/ctime 及已有 model/basis ID，`cache_identity()` 不再读取整份输入计算哈希。共享缓存复用检查身份、文件集合与字节数，不进行全量 SHA256；`ANSATZ_VERIFY_CACHE` 不再启用哈希闸门。缓存元数据保留 `sha256` 字符串字段，新记录为空字符串；模型导出身份和显式 `local_vfunc.py verify` 工具保持原有格式。
+输入身份使用文件大小、mtime/ctime 及已有 model/basis ID，`cache_identity()` 不再读取整份输入计算哈希。共享缓存复用检查身份、文件集合与字节数，不保留内容摘要字段、空字段或摘要清单。模型包 `files` 记录文件长度，`verify` 检查文件存在和长度；新模型/基底导出使用随机的 64 字符 ID，原生二进制头部长度不变。
 
 新建 `.npy` 缓存不超过 256 MiB 时检查全部行，超过时只检查首行。输入与缓存应在运行期间保持不变；这些检查不能发现所有等长内容损坏。
 
@@ -277,3 +277,5 @@ H0/projector，原生 H 组装和转矩收缩也读取对应基底的缓存。H�
 文件缺失或损坏、维度/格式错误、模型与缓存身份不匹配、非有限数值、非正定重叠矩阵仍属于功能错误。遇到这些错误须修复输入或重新生成对应结果，不能把错误缓存作为有效检查点继续使用。
 
 Hamiltonian 的 Hermiticity 残差超过 1e-5、参考投影残差超过 1e-6 只给诊断提示；伴随/直接导数残差超过 1e-6 仍报错。
+
+重新导出模型或重建投影会生成新的 ID；更新配置并使用对应的新 RVR，不要混用不同导出的文件。旧格式元数据可读取，但不会在新生成的记录中复制内容摘要。

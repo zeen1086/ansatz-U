@@ -85,19 +85,6 @@ def check_regression() -> None:
     quality_check(passed, f'Material regression missing, unreadable, failed or for another model: {path}; continuing')
 
 
-def file_digest(path: Path) -> str:
-    """Hash contents, rejecting a source modified while it is being read."""
-    import hashlib
-    before = path.stat()
-    h = hashlib.sha256()
-    with path.open('rb') as stream:
-        for chunk in iter(lambda: stream.read(8*1024*1024), b''):
-            h.update(chunk)
-    after = path.stat()
-    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
-        raise ValueError(f'Input changed during hashing: {path}')
-    return h.hexdigest()
-
 
 def shared_bundle(path: Path, identity: dict, build) -> Path:
     """Publish an immutable bundle atomically; validate it once per worker startup."""
@@ -134,8 +121,7 @@ def shared_bundle(path: Path, identity: dict, build) -> Path:
                     for row in (a[:1] if a.nbytes>256*1024**2 else a):
                         if not np.isfinite(row).all():
                             raise ValueError(f'Nonfinite cache payload: {p.name}')
-                # Keep the legacy field without computing or checking payload hashes.
-                files[p.name] = dict(bytes=p.stat().st_size, sha256='')
+                files[p.name] = dict(bytes=p.stat().st_size)
             if not files:
                 raise ValueError('Empty shared cache')
             save(staging/'CACHE.json', dict(identity=identity, files=files))

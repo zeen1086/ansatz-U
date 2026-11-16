@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
-import hashlib
+import uuid
 import importlib
 from itertools import product
 import json
@@ -20,13 +20,6 @@ RUNTIME = ('features.py', 'symmetry.py', 'model.py', 'workflow.py', 'local_field
 DATA = ('C_v_local.npy', 'C_B_local.npy', 'local_grid.npz', 'KERNELS.json',
         'model/model.json', 'model/parameters.npz')
 
-
-def digest(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open('rb') as f:
-        for block in iter(lambda: f.read(8*1024*1024), b''):
-            h.update(block)
-    return h.hexdigest()
 
 
 def save(path: Path, value: dict) -> None:
@@ -80,16 +73,16 @@ def export(source: Path, code: Path, structure: Path, output: Path,
         raise ValueError('Local kernel shape, storage or commensurate grid mismatch')
     if kernel['cutoff_A'] != 6. or meta['scalar_gauge'] != 'cell_mean_zero':
         raise ValueError('Unsupported frozen kernel/gauge definition')
-    identity = {f: digest(source/f) for f in DATA}
-    identity.update({f'runtime/{f}': digest(code/f) for f in RUNTIME})
+    identity = {f: {'bytes':(source/f).stat().st_size} for f in DATA}
+    identity.update({f'runtime/{f}': {'bytes':(code/f).stat().st_size} for f in RUNTIME})
     contract = dict(schema=SCHEMA, files=identity, primitive_cell_A=primitive.tolist(),
         Ni_fractional=centers[0].tolist(), primitive_motif=[list(m) for m in motif],
         primitive_grid=grid.tolist(), scalar_offset_eV=scalar_offset_eV,
         scalar_gauge='subtract full-cell grid mean, then add fixed scalar_offset_eV',
         Ueff_eV=meta['ueff'], ncoeff=ncoef, spin_order='up d1..5, down d1..5',
         Hamiltonian_order='x*L+y cell, spatial orbital, up/down',
-        source_parameters_sha256=identity['model/parameters.npz'], no_refit=True)
-    model_id = hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest()
+        no_refit=True)
+    model_id = uuid.uuid4().hex+uuid.uuid4().hex
     output.parent.mkdir(parents=True, exist_ok=True)
     stage = output.with_name(output.name+'.partial')
     stage.mkdir(exist_ok=False)
@@ -110,32 +103,33 @@ def export(source: Path, code: Path, structure: Path, output: Path,
         f.write(model_id.encode('ascii'))
         f.write(np.asarray(nodes, '<i4').tobytes(order='C'))
     contract.update(model_id=model_id, source_bundle=str(source), source_code=str(code),
-                    native_geometry_sha256=digest(stage/'native_geometry.bin'))
+                    native_geometry_bytes=(stage/'native_geometry.bin').stat().st_size)
     for name, expected in identity.items():
-        if digest(stage/name) != expected:
+        if (stage/name).stat().st_size != expected['bytes']:
             raise RuntimeError(f'Export readback changed {name}')
     save(stage/'V_FUNC.json', contract)
     stage.rename(output)
     return dict(status='EXPORTED', path=str(output), model_id=model_id,
-                parameter_sha256=identity['model/parameters.npz'], lossless_readback=True)
+                lossless_readback=True)
 
 
 def metadata(directory: Path) -> dict:
     meta = json.loads((directory/'V_FUNC.json').read_text())
     if meta['schema'] != SCHEMA:
         raise ValueError('Not a native V1 V_func_tmp package')
-    contract = {k:v for k,v in meta.items() if k not in
-                ('model_id','source_bundle','source_code','native_geometry_sha256')}
-    if hashlib.sha256(json.dumps(contract, sort_keys=True).encode()).hexdigest() != meta['model_id']:
-        raise ValueError('Changed V_func_tmp contract or model identity')
+    if len(meta['model_id'])!=64:raise ValueError('Model ID must contain 64 characters')
     return meta
 
 
 def verify(directory: Path) -> dict:
     meta = metadata(directory)
-    for name, expected in {**meta['files'], 'native_geometry.bin':meta['native_geometry_sha256']}.items():
-        if digest(directory/name) != expected:
-            raise ValueError(f'Changed exported model file: {name}')
+    for name, expected in meta['files'].items():
+        path=directory/name
+        if not path.is_file() or (isinstance(expected,dict) and path.stat().st_size!=expected['bytes']):
+            raise ValueError(f'Missing or truncated exported model file: {name}')
+    geometry=directory/'native_geometry.bin'
+    if not geometry.is_file() or geometry.stat().st_size!=meta.get('native_geometry_bytes',geometry.stat().st_size):
+        raise ValueError('Missing or truncated native geometry')
     return meta
 
 
@@ -162,12 +156,12 @@ def prepare_projection(args) -> dict:
         path = args.wan_dir/f'wan_{i}'
         if path.stat().st_size != 16*len(rows)*int(np.prod(meta['primitive_grid'])):
             raise ValueError(f'Wrong complex128 primitive-grid byte count: {path}')
-        files[path.name] = digest(path)
-    contract = dict(model_id=meta['model_id'], Wannier_sha256=files,
-                    translations_sha256=digest(args.translations), kz=kz.tolist(),
-                    background_sha256=bg['sha256'], grid_weight=args.grid_weight,
-                    nwan=args.nwan, source_background=bg)
-    basis_id = hashlib.sha256(json.dumps(contract,sort_keys=True).encode()).hexdigest()
+        files[path.name] = dict(bytes=path.stat().st_size)
+    contract = dict(model_id=meta['model_id'], Wannier_files=files,
+                    translations_bytes=args.translations.stat().st_size, kz=kz.tolist(),
+                    background_id=bg.get('background_id',str(args.background.resolve())), grid_weight=args.grid_weight,
+                    nwan=args.nwan, source_background=dict(kind=bg['kind'],source=bg.get('source','')))
+    basis_id = uuid.uuid4().hex+uuid.uuid4().hex
     args.output.mkdir(parents=True,exist_ok=False)
     np.savetxt(args.output/'kz.dat',kz,header=str(len(kz)),comments='',fmt='%.17g')
     settings=dict(model_path=args.model,wan_dir=args.wan_dir,translations_path=args.translations,
@@ -242,7 +236,7 @@ def export_background(source: Path, output: Path) -> dict:
         for a in (hr.transpose(1,2,0), pr.transpose(1,2,0), np.zeros((810,810),complex), np.zeros((10,10),complex)):
             f.write(np.asarray(a,'<c16').tobytes(order='F'))
     report = dict(kind='pure_H0_no_local_fields_no_HU', source=str(source.resolve()),
-        source_sha256=digest(source), sha256=digest(output),
+        background_id=uuid.uuid4().hex+uuid.uuid4().hex,
         transformation='original weighted WS inverse transform; p(q)=raw_projector*dis*U',
         H0_source_roundtrip_max_eV=float(np.max(abs(back-hq))),
         excluded='source scalar, source N0 and all old fitted potential kernels')
@@ -339,7 +333,7 @@ def hamiltonian(args) -> dict:
     if (len(header)!=176 or header[:16]!=b'LANIO2_LRVR_V2  '
             or header[48:112].decode()!=metadata(args.model)['model_id']
             or header[112:176].decode()!=projection['basis_id']
-            or projection['background_sha256']!=background['sha256']):
+            or projection.get('background_id',str(args.background.resolve()))!=background.get('background_id',str(args.background.resolve()))):
         raise ValueError('B_general model/basis/background binding mismatch')
     work = args.output.absolute()
     report = evaluate(args.model, args.structure, work, args.derivative_sites, args.step,

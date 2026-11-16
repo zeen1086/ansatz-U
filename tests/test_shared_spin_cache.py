@@ -1,6 +1,7 @@
 """Shared cache publication, input identity and reuse on a small real grid."""
 from pathlib import Path
 import sys
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -14,9 +15,11 @@ import complete_energy as driver
 
 class SharedCacheTests(unittest.TestCase):
     def test_cache_reuse_checks_size_without_hashing(self):
-        with tempfile.TemporaryDirectory() as tmp,patch.object(common,'file_digest',side_effect=AssertionError('full read')):
+        with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'cache'
             common.shared_bundle(path,{},lambda out:np.save(out/'a.npy',np.ones(3)))
+            record=json.loads((path/'CACHE.json').read_text())
+            self.assertEqual(set(record['files']['a.npy']),{'bytes'})
             np.save(path/'a.npy',np.zeros(3))
             self.assertEqual(common.shared_bundle(path,{},lambda out:self.fail('rebuilt')),path)
             (path/'a.npy').write_bytes(b'truncated')
@@ -98,7 +101,7 @@ class SharedCacheTests(unittest.TestCase):
     def test_binding_rejects_changed_inputs_and_adopts_legacy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'input';source.write_bytes(b'first')
-            identity={'input':common.file_digest(source)}
+            identity={'input':common.input_digest(source)}
             with patch.object(driver,'SHARED',root):
                 driver.bind_cache(identity);driver.bind_cache(identity)
                 import os
@@ -106,7 +109,7 @@ class SharedCacheTests(unittest.TestCase):
                 source.write_bytes(b'other')
                 os.utime(source,ns=(stamp.st_atime_ns,stamp.st_mtime_ns))
                 with self.assertRaisesRegex(ValueError,'inputs changed'):
-                    driver.bind_cache({'input':common.file_digest(source)})
+                    driver.bind_cache({'input':common.input_digest(source)})
                 (root/'INPUTS.json').unlink();(root/'reference').mkdir()
                 driver.bind_cache(identity)
                 self.assertTrue((root/'INPUTS.json').is_file())

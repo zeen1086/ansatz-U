@@ -18,7 +18,7 @@ LaNiO₂ 分支来源对应：
 | `9_super_wan/band.f90` | `7_spin/band_lanio2.f90` |
 | `9_super_wan/calc_tot_ene.f90` | `7_spin/calc_tot_ene_lanio2.f90` |
 
-新增 `frozen_io`、`tensor_rvr`、`local_ansatz`、`numerics`、`run_ansatzU` 移植并扩展了既有LaNiO₂局域Python参考。冻结模型源SHA256：`6fe8cb35d6271638fea0fe9227456a4f1b04910fb8cf181fe30cc212420c2ba0`。完整差异、原源码身份和数值记录保存在外部归档。
+新增 `frozen_io`、`tensor_rvr`、`local_ansatz`、`numerics`、`run_ansatzU` 移植并扩展了既有LaNiO₂局域Python参考。完整差异、原源码身份和数值记录保存在外部归档。
 
 四自旋三势入口 `joint_features/joint_model` 对应既有 `covariant_basis.py`、`b_features.py` 中的 scalar8、B12+28、复数N及64个晶体作用。`joint_npy` 原生读取既有DFT标签，`joint_svd/fit_joint` 为新带权SVD目标，`eval_joint` 输出三势及解析角度导数，`run_joint.sh` 仅解包、构建和启动；生产链不调用Python。该目标按用户选择实现，不继承旧算符损失的数值资格或训练结果。
 

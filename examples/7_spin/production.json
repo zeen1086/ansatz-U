@@ -5,8 +5,7 @@
   "native_build": "/absolute/build",
   "references": "/absolute/repo/7_spin/shared/wannier/references",
   "work": "/absolute/repo/7_spin/shared",
-  "model_id": "c21d4352e9c33e86eeaade75fe3d33f9baddba3a48214a92110679ff2bfdae67",
-  "parameters_sha256": "9353c65c9fa5b04a6e0b297b59e7eca827a3dae81149699f91a2eef09cb6c7c8",
+  "model_id": "0000000000000000000000000000000000000000000000000000000000000000",
   "old_J": "/absolute/optional/Jij_periodic_meV.csv",
   "rvr_slices": {},
   "complete_energy": {

@@ -9,7 +9,7 @@ import numpy as np
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(Path(__file__).resolve().parent)]
-from local_vfunc import metadata,digest
+from local_vfunc import metadata
 from test_local_vfunc import background,spin_matrix,put
 
 
@@ -31,7 +31,7 @@ def main(args):
                 f.write(np.asarray(kernel*(i==j),'<c16').tobytes())
     h0=np.diag(np.arange(30)*.1).astype(complex);a=np.eye(5,30,dtype=complex)*(.2+.1j)
     background(r/'pure.au',h0,a)
-    put(r/'PROJECTION.json',dict(basis_id=basis,background_sha256=digest(r/'pure.au'),
+    put(r/'PROJECTION.json',dict(basis_id=basis,
                                  scope='synthetic native RVR for real-model runtime test'))
     np.savetxt(r/'kpoints.dat',[[.13,.21,0.,1.]],header='1',comments='')
     command=[sys.executable,'-B',str(ROOT/'local_vfunc.py'),'cal_Hsk','--model',str(args.model),

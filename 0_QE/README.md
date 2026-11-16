@@ -10,7 +10,8 @@ based on the magnetic and nonmagnetic sources used on ISSP.
 Start with two clean QE 7.6 trees, including the pinned external dependencies
 (`git clone --branch qe-7.6 --recursive https://gitlab.com/QEF/q-e.git` or the complete release).
 `install.py` verifies the original files against `upstream.json` before copying common and
-variant sources. It rejects modified or incompatible source trees.
+variant sources. The manifest records expected file lengths only; missing files and size mismatches
+are rejected. It does not compare contents.
 
 ```bash
 python3 install.py magnetic /path/to/qe-7.6-magnetic

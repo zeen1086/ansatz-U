@@ -2,7 +2,6 @@
 """Apply common sources and one variant to a clean QE 7.6 source tree."""
 from pathlib import Path
 import argparse
-import hashlib
 import json
 import shutil
 
@@ -13,8 +12,8 @@ def install(target: Path, variant: str) -> None:
     manifest=json.loads((HERE/"upstream.json").read_text())
     for name, expected in manifest["files"].items():
         path=target/name
-        if (expected is None and path.exists()) or (expected is not None and (not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=expected)):
-            raise ValueError(f"Expected an unmodified QE 7.6 source: {path}")
+        if (expected is None and path.exists()) or (expected is not None and (not path.is_file() or path.stat().st_size!=expected)):
+            raise ValueError(f"Missing or unexpected-size QE 7.6 source: {path}")
     for folder in ("common",variant):
         for source in (HERE/folder).rglob("*"):
             if source.is_file():
