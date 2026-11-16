@@ -20,6 +20,8 @@ make local-rvr BUILD=/absolute/external/build
 
 输出为 `local/cal_RVR_split`、`local/combine`、`local/cal_Hsk`。三个程序为串行/BLAS 程序，投影按轨道/kz 从外部调度并行，不使用 `mpirun` 启动多份写同一分片的进程。Python 构建入口 `build.py` 同样只链接当前模块。
 
+新计算默认精简输出：合并成功并检查最终文件后，`combine` 清除空间场缓存及轨道/kz 分片；`local_vfunc.py cal_Hsk` 校验全部结果后只保留矩阵和 `HAMILTONIAN.json`。两者添加 `--keep-intermediates` 可保留调试文件。失败时不清理；独立 `evaluate` 的系数和生产续算检查点仍保留。详见 [文件保留规则](local/README.md)。
+
 `LANIO2_LOCAL_VFUNC_V2`、`LANIO2_LRVR_V2` 和纯 H0 的 `LANIO2_AU_V1` 布局未变。背景读取器保留旧 KB/N0 槽位的长度、有限值和 Hermiticity 校验，读取后丢弃；当前 B 来自 V1 RVR，N 来自完整反馈模型。`background_projectors`、`project_at` 从旧 `local_ansatz` 原样迁入，周期相位、Ni/轨道/自旋顺序不变。
 
 2026-11-16 删除的接口：
@@ -42,3 +44,5 @@ make local-rvr BUILD=/absolute/external/build
 | 已删除路径引用、文档相对链接、背景/projector 函数迁移 | 代码/配置无残留引用，链接有效；两个迁移函数与原文逐字节一致 |
 
 小型测试覆盖实现一致性，不代替完整材料投影、HPC 生产运行或独立 DFT 物理验证。本次未重新运行生产计算。
+
+同日默认输出精简回归：离线测试 24 项通过、1 项 MPI 跳过；原生合并的精简/调试结果 SHA256 一致，截断分片导致失败时全部中间文件保留；真实 V1 的 15 个 H/dH 分量在两种模式下逐字节一致，索引完整归入 JSON。原生进程失败或后续导数矩阵截断时，已成功的前序结果与所有预测输入均保留。生产批量检查点测试继续通过。

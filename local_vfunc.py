@@ -288,7 +288,7 @@ def write_coeff(path: Path, meta: dict, length: int, p: np.ndarray, n: np.ndarra
 
 
 def evaluate(directory: Path, structure: Path, output: Path,
-             derivative_sites: list[int], step: float) -> dict:
+             derivative_sites: list[int], step: float, *, keep_intermediates: bool=False) -> dict:
     meta = metadata(directory)
     if meta['schema'] != SCHEMA or step <= 0 or not np.isfinite(step):
         raise ValueError('Invalid package or derivative step')
@@ -314,11 +314,13 @@ def evaluate(directory: Path, structure: Path, output: Path,
             samples.append(value(spins))
         dp, dn = ((8*(samples[0][i]-samples[1][i])-samples[2][i]+samples[3][i])/(12*step)
                   for i in (0, 1))
-        derivatives_p.append(dp); derivatives_n.append(dn)
+        if keep_intermediates:
+            derivatives_p.append(dp); derivatives_n.append(dn)
         write_coeff(output/f'dsite_{site:04}.bin', meta, length, dp, dn, True)
-    np.savez(output/'prediction.npz', p=p, N=n, VU=meta['Ueff_eV']*(.5*np.eye(10)-n),
-             dP=np.array(derivatives_p), dN=np.array(derivatives_n),
-             derivative_sites=derivative_sites, native_from_input_order=order)
+    if keep_intermediates:
+        np.savez(output/'prediction.npz', p=p, N=n, VU=meta['Ueff_eV']*(.5*np.eye(10)-n),
+                 dP=np.array(derivatives_p), dN=np.array(derivatives_n),
+                 derivative_sites=derivative_sites, native_from_input_order=order)
     report = dict(status='COMPLETE', model_id=meta['model_id'], L=length,
                   derivative_sites=derivative_sites, derivative_step_rad=step,
                   derivative_axis=[0,1,0], feedback='converged on every finite-difference evaluation',
@@ -341,7 +343,11 @@ def hamiltonian(args) -> dict:
             or projection['background_sha256']!=background['sha256']):
         raise ValueError('B_general model/basis/background binding mismatch')
     work = args.output.absolute()
-    report = evaluate(args.model, args.structure, work, args.derivative_sites, args.step)
+    report = evaluate(args.model, args.structure, work, args.derivative_sites, args.step,
+                      keep_intermediates=args.keep_intermediates)
+    indices = {}
+    intermediates = [work/'PREDICTION.json']
+    dimension = 60*report['L']**2
     for coeff in [work/'value.bin', *sorted(work.glob('dsite_*.bin'))]:
         prefix = work/coeff.stem
         control = prefix.with_suffix('.nml')
@@ -355,10 +361,30 @@ def hamiltonian(args) -> dict:
                   f" dump_components={'.true.' if args.components else '.false.'}", '/']
         control.write_text('\n'.join(lines)+'\n')
         subprocess.run([str(args.binary.resolve()), str(control)], check=True)
-        if not Path(str(prefix)+'.index').is_file() or not list(work.glob(coeff.stem+'.k*.h')):
-            raise RuntimeError('Native cal_Hsk returned without Hamiltonian output')
+        index = prefix.with_suffix('.index')
+        rows = index.read_text().splitlines()
+        if len(rows)<5:
+            raise RuntimeError('Incomplete native Hamiltonian index; intermediates retained')
+        length, nd, nk = map(int, rows[1].split()[:3])
+        if (length!=report['L'] or nd!=dimension or nk!=len(rows)-4
+                or [s.strip() for s in rows[2:4]]!=[report['model_id'],projection['basis_id']]):
+            raise RuntimeError('Invalid native Hamiltonian index; intermediates retained')
+        for ik in range(1,nk+1):
+            if int(rows[ik+3].split()[0])!=ik:
+                raise RuntimeError('Incomplete native k-point order; intermediates retained')
+            for suffix in (('h','h0','hv','hb','hu') if args.components else ('h',)):
+                if (work/f'{coeff.stem}.k{ik:06}.{suffix}').stat().st_size!=16*dimension**2:
+                    raise RuntimeError('Truncated native Hamiltonian output; intermediates retained')
+        indices[coeff.stem] = rows
+        intermediates.extend([coeff,control,index])
     report['native_Hamiltonian_status'] = 'COMPLETE'
-    save(work/'HAMILTONIAN.json', report)
+    report['intermediates_kept'] = args.keep_intermediates
+    save(work/'HAMILTONIAN.json', {**report, 'native_indices':indices,
+        'inputs':{key:str(getattr(args,key).resolve())
+                  for key in ('model','structure','rvr','background','kpoints','binary')}})
+    if not args.keep_intermediates:
+        for path in intermediates:
+            path.unlink()
     return report
 
 
@@ -382,6 +408,8 @@ def main() -> None:
             a.add_argument('--'+key, type=Path, required=True)
         a.add_argument('--derivative-sites', type=int, nargs='*', default=[])
         a.add_argument('--step', type=float, default=.001)
+        a.add_argument('--keep-intermediates', action='store_true',
+                       help='keep diagnostic prediction arrays and, for cal_Hsk, native inputs and indices')
         if name == 'cal_Hsk':
             for key in ('rvr','background','kpoints','binary'):
                 a.add_argument('--'+key, type=Path, required=True)
@@ -396,7 +424,8 @@ def main() -> None:
     elif args.command == 'prepare-projection':
         result = prepare_projection(args)
     elif args.command == 'evaluate':
-        result = evaluate(args.model, args.structure, args.output, args.derivative_sites, args.step)
+        result = evaluate(args.model, args.structure, args.output, args.derivative_sites, args.step,
+                          keep_intermediates=args.keep_intermediates)
     else:
         result = hamiltonian(args)
     print(json.dumps(result, indent=2))

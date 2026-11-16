@@ -244,9 +244,11 @@ contains
   write(*,'(a,2i8)') 'RVR_ROW_COMPLETE orbital,kz=',i,k
  enddo
  end subroutine
- subroutine combine_rows(path)
+ subroutine combine_rows(path,keep_intermediates)
  character(*),intent(in)::path
+ logical,intent(in)::keep_intermediates
  type(projection_data)::t
+ type(local_projected)::checked
  integer::u,v,i,j,k,ios
  integer(int32)::head(8)
  integer,allocatable::xy(:,:),difference(:,:)
@@ -281,7 +283,21 @@ contains
   close(u)
  enddo
  enddo
- close(v)
+ close(v,iostat=ios)
+ call require(ios==0,'Cannot finish B_general; projection intermediates retained')
+ call open_projected(trim(rvr_dir)//'/B_general',v,checked);close(v)
+ if(.not.keep_intermediates) then
+  do k=1,t%nk
+  do i=1,nwan
+   open(newunit=u,file=trim(row_path(i,k)),status='old',access='stream',form='unformatted',iostat=ios)
+   call require(ios==0,'Cannot reopen completed RVR row for cleanup')
+   close(u,status='delete',iostat=ios);call require(ios==0,'Cannot remove completed RVR row')
+  enddo
+  enddo
+  open(newunit=u,file=trim(rvr_dir)//'/spatial_fields',status='old',access='stream',form='unformatted',iostat=ios)
+  call require(ios==0,'Cannot reopen completed spatial cache for cleanup')
+  close(u,status='delete',iostat=ios);call require(ios==0,'Cannot remove completed spatial cache')
+ endif
  write(*,'(a)') 'B_GENERAL_COMPLETE'
  end subroutine
  subroutine open_projected(path,u,t)

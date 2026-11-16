@@ -33,6 +33,8 @@ V1 模型导出见 [local RVR 接口](../../6_RVR/local/README.md)。本仓库�
 `4_potential/local/` 保存逐字节复制的六个冻结推理源，可作为导出命令的 `--code`。
 导出后的 `interface/V_func_tmp` 含这些源及全部冻结模型参数，运行不依赖训练目录。
 
+独立 `local_vfunc.py evaluate` 默认只生成生产所需的 `value.bin/dsite_XXXX.bin` 和 `PREDICTION.json`；重复存储这些数组的 `prediction.npz` 仅在传入 `--keep-intermediates` 时生成。批量驱动仍保留实际续算所需的系数、索引和完成标记，不使用单构型 `cal_Hsk` 命令完成后的临时文件清理。
+
 复制 [配置模板](../../examples/7_spin/production.json) 到外部运行目录，替换所有绝对路径：
 
 ```sh

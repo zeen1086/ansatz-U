@@ -34,10 +34,11 @@ def main(args):
     put(r/'PROJECTION.json',dict(basis_id=basis,background_sha256=digest(r/'pure.au'),
                                  scope='synthetic native RVR for real-model runtime test'))
     np.savetxt(r/'kpoints.dat',[[.13,.21,0.,1.]],header='1',comments='')
-    subprocess.run([sys.executable,'-B',str(ROOT/'local_vfunc.py'),'cal_Hsk','--model',str(args.model),
+    command=[sys.executable,'-B',str(ROOT/'local_vfunc.py'),'cal_Hsk','--model',str(args.model),
         '--structure',str(args.structure),'--output',str(r/'output'),'--rvr',str(r/'B_general'),
         '--background',str(r/'pure.au'),'--kpoints',str(r/'kpoints.dat'),'--binary',str(args.binary),
-        '--derivative-sites','1','2','--components'],check=True)
+        '--derivative-sites','1','2','--components']
+    subprocess.run(command+['--keep-intermediates'],check=True)
     d=np.load(r/'output/prediction.npz');nc=len(d['p']);nd=60*nc
     ap=np.zeros((10,60),complex);ap[:5,::2]=a;ap[5:,1::2]=a
     errors={}
@@ -55,8 +56,18 @@ def main(args):
         actual=np.fromfile(r/'output'/f'{label}.k000001.h','<c16').reshape(nd,nd,order='F')
         errors[label]=float(np.max(abs(expected-actual)))
     assert max(errors.values())<1e-10,errors
+    command[command.index('--output')+1]=str(r/'compact')
+    subprocess.run(command,check=True)
+    report=json.loads((r/'compact/HAMILTONIAN.json').read_text())
+    matrices=sorted(p.name for p in (r/'output').glob('*.k*'))
+    assert len(matrices)==15
+    assert {p.name for p in (r/'compact').iterdir()}==set(matrices)|{'HAMILTONIAN.json'}
+    assert all((r/'compact'/name).read_bytes()==(r/'output'/name).read_bytes() for name in matrices)
+    for label in ('value','dsite_0001','dsite_0002'):
+        assert report['native_indices'][label]==(r/'output'/f'{label}.index').read_text().splitlines()
     result=dict(status='PASS',errors_eV=errors,real_V1=True,feedback_derivatives=True,
                 native_assembly=True,projection_basis='synthetic known-answer fixture',
+                compact_vs_debug_identical_matrices=len(matrices),compact_indices_preserved=True,
                 actual_material_Hamiltonian_validation=False)
     put(r/'RESULT.json',result);print(json.dumps(result,indent=2))
 

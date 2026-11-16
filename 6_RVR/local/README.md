@@ -70,6 +70,17 @@ Wannier输入沿用原始 `wan_1 ... wan_30`：little-endian complex128流文件
 
 行0直接读取 `V_func_tmp` 的局域空间核，只做一次三线性插值、紧支撑窗口与z周期求和，写共享 `spatial_fields`。行1..30读取缓存与共同Wannier，执行Fortran/BLAS投影；第三个可选参数指定一个1基kz索引，支持按轨道/kz分片。合并器要求所有分片完整且模型、基底、平移和权重一致，输出 `B_general`。
 
+默认精简输出：`combine` 完整写出并读回检查 `B_general` 的格式/字节数后，删除此次合并使用的 `spatial_fields` 和全部 `B_general_i_kzk` 分片。由 `prepare-projection` 创建的目录最终只保留以下四个文件：
+
+```text
+B_general          # 可复用矩阵元
+PROJECTION.json    # 来源绑定及准备记录
+projection.nml     # 投影输入，便于追溯和重建
+kz.dat             # 投影 kz 列表
+```
+
+30 个轨道、8 个 kz 时，正常完成后的文件数由 245 个降到 4 个。调试或需要重新合并时用 `combine projection.nml --keep-intermediates` 保留缓存和全部分片。验证失败时不清理中间文件；失败的 `B_general` 可能不完整，不能以文件存在代替成功退出。`PROJECTION.json` 仍是准备记录，不充当合并完成标记。清理只针对本次合并输入，目录中的其他文件不受影响。
+
 投影结果保存所有 scalar62+bias1、B62空间通道。z方向周期固定为1，按显式kz投影；x/y保持真实原胞平移，所以同一个B_general可用于不同L与自旋纹理。新kz要补投影；不对未投影kz默默插值。
 
 标量去均值通过同一Wannier支持上的重叠矩阵处理，不假设截断基底的重叠恰为单位阵。不同真实平移折叠到同一超胞位点时仍逐项累加。
@@ -98,13 +109,15 @@ Python只执行冻结的原始特征、非线性读出和反馈，输出 `value.
 
 H0、v、B、HU各计一次；导数模式不加入H0、偏置常数或I/2项。全部矩阵为complex128/eV，不强制对称化。k点文件首行点数，随后每行 `kx ky kz weight`，权重和为1。Hubbard顺序为 `[up d1..5,down d1..5]`，Hamiltonian为 `(cell,orbital,up/down)`。
 
-每个构型输出：
+`local_vfunc.py cal_Hsk` 默认完成后只保留：
 
-- `prediction.npz`：p、完整N、VU、dp/dN、Ni排序。
-- `value.bin`、`dsite_XXXX.bin`：原生模型输入，含模型ID，防止混用RVR。
-- `value.k000001.h` 等：逐k总H；导数对应 `dsite_XXXX.k000001.h`。
-- 开启 `--components` 时另存 `.h0/.hv/.hb/.hu`。
-- `.index`：维数、k点/权重、标量均值及Hermiticity；`HAMILTONIAN.json`仅在全部调用成功后写出。
+- `value.k000001.h` 等：逐k总H；要求导数时另有 `dsite_XXXX.k000001.h`。
+- 开启 `--components` 时另存 `.h0/.hv/.hb/.hu`；默认不生成分量文件。
+- `HAMILTONIAN.json`：预测和组装完成记录、输入路径、模型/基底身份及所有原生索引。`native_indices` 按 `value/dsite_XXXX` 保存原 `.index` 的全部文本行，含维数、k点/权重、标量均值及Hermiticity。
+
+只有全部原生调用成功，且索引及所有预期矩阵的字节数通过检查后，才删除 `value.bin/dsite_XXXX.bin`、对应 `.nml/.index` 和中间的 `PREDICTION.json`。失败时保留现场。添加 `--keep-intermediates` 保留这些文件，并生成诊断用 `prediction.npz`（p、完整N、VU、dp/dN、Ni排序）；不改变数值计算。
+
+单独运行 `local_vfunc.py evaluate` 时，`value.bin/dsite_XXXX.bin` 和 `PREDICTION.json` 是后续组装、转矩与断点续算的输入，因此始终保留。只有额外的 `prediction.npz` 改为 `--keep-intermediates` 时输出。生产批量驱动使用这个独立入口，其必要检查点不受单构型 `cal_Hsk` 清理影响。
 
 原生矩阵读取示例：`np.fromfile(path,dtype='<c16').reshape(nd,nd,order='F')`。也可单独用 `local_vfunc.py evaluate` 生成系数，再用原生 `cal_Hsk run.nml` 调用；公共入口额外核验基底与背景来源。
 

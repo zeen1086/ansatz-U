@@ -114,7 +114,19 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False):
             kz_path=r/'kz.dat',basis_id=basis_id).items())+"\n nwan=30, grid_weight=1.\n/\n")
         call(binary/'cal_RVR_split',control,0)
         for i in range(1,31): call(binary/'cal_RVR_split',control,i)
+        rows=sorted(project.glob('B_general_*'))
+        assert len(rows)==60
+        last=rows[-1];saved=last.read_bytes();last.write_bytes(saved[:-1])
+        assert 'byte count mismatch' in call(binary/'combine',control,ok=False)
+        assert (project/'spatial_fields').is_file() and all(p.is_file() for p in rows)
+        (project/'B_general').unlink();last.write_bytes(saved)
+        call(binary/'combine',control,'--keep-intermediates')
+        reference=digest(project/'B_general')
+        assert (project/'spatial_fields').is_file() and all(p.is_file() for p in rows)
+        (project/'B_general').unlink();(project/'unrelated.txt').write_text('preserve this file')
         call(binary/'combine',control)
+        assert digest(project/'B_general')==reference
+        assert {p.name for p in project.iterdir()}=={'B_general','unrelated.txt'}
         h0=rng.normal(size=(30,30))+1j*rng.normal(size=(30,30));h0=(h0+h0.conj().T)/20
         pr=(rng.normal(size=(5,30))+1j*rng.normal(size=(5,30)))/15
         background(r/'pure.au',h0,pr)
@@ -198,7 +210,8 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False):
         result=dict(status='PASS',L=[1,2,3],k_points=q[:,:3].tolist(),
             real_and_derivative_components=len(errors),maximum_matrix_error_eV=max(errors),
             full_complex_N=True,scalar_mean_same_basis=True,periodic_z_phases=True,
-            wrong_model_rejected=True,scope='synthetic full native chain versus direct periodic real-grid integration',
+            wrong_model_rejected=True,compact_rvr_matches_debug=True,failed_combine_retains_intermediates=True,
+            scope='synthetic full native chain versus direct periodic real-grid integration',
             actual_material_Hamiltonian_validation=False)
         if batch_checks:
             result.update(batch_vs_single_components=len(batch_errors),batch_vs_single_max_eV=max(batch_errors),
