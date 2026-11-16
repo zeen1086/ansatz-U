@@ -7,8 +7,9 @@ from scipy.optimize import brentq
 from density_map import NG,ws_weights,fold_unitary,fold_density,fold_project,cells_to_grid,grid_to_cells
 from complete_readout import static,operators,metric,fermi,loewner,hubbard,trace,RY,SIGMA
 from native_input import input_file,write_density,read_density
-from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, require_regression, file_digest, shared_bundle
-from run_material import native_batch, binding
+from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, quality_check, check_regression, file_digest, shared_bundle
+from common import atomic_npz, valid_npz, bind_inputs, archive_incomplete, input_digest
+from run_material import native_batch, binding, spin_structure, coefficient_identity, valid_coefficients
 from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
 ENERGY=CONFIG['complete_energy']
@@ -24,17 +25,49 @@ def frozen():
         raise ValueError('Frozen V1 identity changed')
     return len(meta['files'])+1
 
-def save(p,value):
-    p.parent.mkdir(parents=True,exist_ok=True);tmp=p.with_suffix(p.suffix+'.partial');tmp.write_text(json.dumps(value,indent=2,allow_nan=False)+'\n');tmp.replace(p)
+from common import save
+
+ATTEMPT = None
+_WORKER_LOCK = None
+
+def start_attempt(z):
+    import fcntl,re
+    global ATTEMPT,_WORKER_LOCK
+    run_id=os.environ.get('ANSATZ_RUN_ID','')
+    if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',run_id):
+        raise ValueError('Set one fresh ANSATZ_RUN_ID shared by all eight workers for each launch')
+    R.mkdir(parents=True,exist_ok=True)
+    locks=R/'worker_locks';locks.mkdir(exist_ok=True)
+    lock=(locks/f'{z}.lock').open('a')
+    try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close();raise RuntimeError(f'Worker {z} is already running in {R}')
+    _WORKER_LOCK=lock
+    candidate=R/'attempts'/run_id;candidate.mkdir(parents=True,exist_ok=True)
+    # Exclusive claims make accidental reuse of a previous launch ID fail closed.
+    try:
+        with (candidate/f'worker_{z}.started').open('x') as f:f.write(str(os.getpid()))
+    except BaseException:
+        lock.close();raise
+    ATTEMPT=candidate
+    barrier('startup',z)
+
+
 def wait(path):
+    if ATTEMPT is None:raise RuntimeError('Run attempt not initialized')
     start=time.monotonic()
-    while not path.exists():
-        if (R/'FAILURE.json').exists():raise RuntimeError('Another worker failed; inspect FAILURE.json')
+    while True:
+        if (ATTEMPT/'FAILURE.json').exists():raise RuntimeError(f'Another worker failed; inspect {ATTEMPT}/FAILURE.json')
+        if path.exists():return
         if time.monotonic()-start>20*3600:raise TimeoutError(str(path))
         time.sleep(2)
+
+
 def barrier(name,z):
-    p=R/'barriers'/name;save(p/f'{z}.json',dict(done=True))
+    if ATTEMPT is None:raise RuntimeError('Run attempt not initialized')
+    p=ATTEMPT/'barriers'/name;save(p/f'{z}.json',dict(done=True))
     for i in range(8):wait(p/f'{i}.json')
+
 def points(L,z):return [(8*(2*x+y)+z,np.array([x/2,y/2,z/8])) for x,y in product(range(2),repeat=2)]
 def folder(L,case):return R/f'L{L:02}/case_{case:02}'
 def oldcase(L,case):
@@ -48,7 +81,7 @@ def cache_identity():
                           (MIN/'inputs/reference_actual', 'reference_density')]:
         for path in sorted(folder.iterdir()):
             if path.is_file(): files[label+'/'+path.name] = path
-    for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py'):
+    for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py','native_input.py','kz_production.py'):
         files['code/'+name] = Path(__file__).with_name(name)
     files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
     return dict(version=1, files={name:file_digest(path) for name,path in files.items()},
@@ -105,7 +138,7 @@ def load_operators(path):
 
 def reference(z,slab,dv,identity,st):
     out=SHARED/'reference';out.mkdir(exist_ok=True)
-    if (out/f'z{z}.npz').exists():return
+    if valid_npz(out/f'z{z}.npz',{'density':(4,NG,4),'N':(4,10,10),'count':()}):return
     data=np.load(REF/'data.npz');i0=data['names'].tolist().index('Neel_anchor');mu=np.load(MIN/'results/BANDS.npz')['mu'][1,0]
     density=np.zeros((4,NG,4));N=np.zeros((4,10,10),complex);count=0.
     for ki,k in enumerate(data['K']):
@@ -130,16 +163,17 @@ def reference(z,slab,dv,identity,st):
         for j,site in enumerate([0,2,1,3]):
             aa=np.zeros((10,240),complex);aa[:5,::2]=data['A'][ki,site];aa[5:,1::2]=data['A'][ki,site];aa=aa[:,ix]
             N[j]+=aa@p@aa.conj().T/128
-    np.savez(out/f'z{z}.npz',density=density,N=N,count=count)
+    atomic_npz(out/f'z{z}.npz',density=density,N=N,count=count)
 
 def background(z,dv):
     barrier('reference',z)
-    if z==0 and not (SHARED/'reference/background.npz').exists():
+    if z==0 and not valid_npz(SHARED/'reference/background.npz',{'density':(4,NG,4),'N':(4,10,10)}):
         rows=[np.load(SHARED/f'reference/z{i}.npz') for i in range(8)];act=sum(v['density'] for v in rows);n=sum(v['N'] for v in rows)
         full=grid_to_cells(read_density(MIN/'inputs/reference_actual/DENSITY.bin',2),2);nt=np.load(MIN/'results/FIELDS.npz')['NDFT'][0][[0,2,1,3]]
-        assert abs(act[:,:,0].sum()*dv-84)<1e-7
-        np.savez(SHARED/'reference/background.npz',density=full-act,N=nt-n)
-    wait(SHARED/'reference/background.npz')
+        if any(not np.isfinite(v).all() for v in (act,n,full,nt)):raise ValueError('Nonfinite reference density or occupation')
+        quality_check(abs(act[:,:,0].sum()*dv-84)<1e-7, f'Reference active electron count: {act[:,:,0].sum()*dv}; expected 84')
+        atomic_npz(SHARED/'reference/background.npz',density=full-act,N=nt-n)
+    barrier('background',z)
 
 def wave_cache(L,z,identity,st,slab):
     paths={};ops={};checks=[];cells=np.array(list(product(range(L),repeat=2)))
@@ -173,67 +207,95 @@ def spectrum(L,case,z,paths,ops,rvr):
     native_batch(source/'coeff/value.bin',np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin' for ki,_ in batch])
     for ki,k in batch:
         out=p/f'k_{ki:04}.npz'
-        if out.exists():continue
+        if valid_npz(out,{'e':(60*L*L,),'Q':(60*L*L,60*L*L),'H':(60*L*L,60*L*L)}):continue
         G=fold_unitary(L,k);T=np.load(paths[ki].parent/'transform.npy',mmap_mode='r');err=json.loads((paths[ki].parent/'metric.json').read_text())['gram_max']
         hpath=p/f'H_{ki:04}/H.k000001.h'
         if not hpath.exists():
             target=p/f'H_{ki:04}';native_batch(source/'coeff/value.bin',k[None],[target],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin']);hpath=target/'H.k000001.h'
         h=G@load_h(hpath,60*L*L)@G.conj().T
         checkpoint=source/f'k_{ki:04}/eigensystem.npz'
-        if err<1e-10 and checkpoint.exists():
+        if err<1e-10 and valid_npz(checkpoint,{'e':(60*L*L,),'v':(60*L*L,60*L*L)}):
             b=np.load(checkpoint);e=b['e'];Q=G@b['v']
-            assert np.max(abs(h@Q-Q*e))<1e-8
+            if Q.shape!=h.shape or e.shape!=(len(h),) or np.max(abs(h@Q-Q*e))>=1e-8:
+                e,u=np.linalg.eigh(T@h@T);Q=T@u
         else:
             e,u=np.linalg.eigh(T@h@T);Q=T@u
-        np.savez(out,e=e,Q=Q,H=h)
+        atomic_npz(out,e=e,Q=Q,H=h)
         print('SPECTRUM',L,case,ki,'metric',err,flush=True)
     barrier(f'spectrum_L{L}_c{case}',z)
     if z==0:
         e=np.array([np.load(p/f'k_{i:04}.npz')['e'] for i in range(32)]);target=21*L*L
         mu=brentq(lambda m:np.mean([fermi(a,m)[0].sum() for a in e])-target,e.min()-20*SIGMA,e.max()+20*SIGMA,xtol=1e-12)
         save(p/'MU.json',dict(mu=mu,electrons=target))
-    wait(p/'MU.json')
+    barrier(f'mu_L{L}_c{case}',z)
 
 def density_stage(L,case,z,paths,dv,ops):
     p=folder(L,case);out=p/f'density_z{z}.npz'
-    if out.exists():return
+    if valid_npz(out,{'density':(L*L,NG,4),'N':(L*L,10,10),'bare':(),'F':(),'band':(),'count':()}):return
     start=time.monotonic();mu=json.loads((p/'MU.json').read_text())['mu'];acc=np.zeros((L*L,NG,4));N=np.zeros((L*L,10,10),complex);bare=0.;F=0.;band=0.;count=0.
     for ki,k in points(L,z):
         b=np.load(p/f'k_{ki:04}.npz');e,Q=b['e'],b['Q'];f,_,free=fermi(e,mu);P=(Q*f)@Q.conj().T;h0,aa=load_operators(ops[ki])
         psi=np.load(paths[ki],mmap_mode='r');acc+=fold_density(psi,P,L)/32/dv
         N+=np.array([a@P@a.conj().T for a in aa])/32;bare+=trace(P,h0)/32;F+=free/32;band+=float(e@f)/32;count+=float(f.sum())/32
         print('DENSITY_POINT',L,case,ki,flush=True)
-    np.savez(out,density=acc,N=N,bare=bare,F=F,band=band,count=count,seconds=time.monotonic()-start)
+    atomic_npz(out,density=acc,N=N,bare=bare,F=F,band=band,count=count,seconds=time.monotonic()-start)
     print('DENSITY_CASE',L,case,z,time.monotonic()-start,flush=True)
 
 def assemble_density(L,case,dv):
     p=folder(L,case);rows=[np.load(p/f'density_z{i}.npz') for i in range(8)];bg=np.load(SHARED/'reference/background.npz');idx=np.array([(x%2)*2+y%2 for x,y in product(range(L),repeat=2)])
     rho=sum(r['density'] for r in rows)+bg['density'][idx];N=sum(r['N'] for r in rows)+bg['N'][idx]
-    charge=float(rho[:,:,0].sum()*dv);assert abs(charge-41*L*L)<1e-6,(L,case,charge)
-    np.savez(p/'DENSITY.npz',N=N);write_density(p/'DENSITY.bin',cells_to_grid(rho,L),L)
-    save(p/'ELECTRONIC.json',{key:float(sum(r[key] for r in rows)) for key in ['bare','F','band','count']})
+    charge=float(rho[:,:,0].sum()*dv)
+    if not np.isfinite(rho).all() or not np.isfinite(N).all():raise ValueError('Nonfinite density or occupation')
+    quality_check(abs(charge-41*L*L)<1e-6, f'L={L}, case={case}: charge={charge}; expected {41*L*L}')
+    atomic_npz(p/'DENSITY.npz',N=N);write_density(p/'DENSITY.bin',cells_to_grid(rho,L),L)
+    save(p/'ELECTRONIC.json',dict(charge=charge,charge_error=abs(charge-41*L*L),**{key:float(sum(r[key] for r in rows)) for key in ['bare','F','band','count']}))
 
 def native(L):
-    out=R/f'L{L:02}/native';out.mkdir(parents=True,exist_ok=True)
-    if (out/'COMPLETE.json').exists():return
-    input_file(out,L);(out/'input_list.txt').write_text('11\n'+''.join(f'case_{i:02} "{folder(L,i)}/DENSITY.bin" 0 0 1\n' for i in range(11)))
-    with (out/'native.out').open('w') as log:subprocess.run([str(Path(ENERGY['native_binary'])),'grid.in'],cwd=out,stdout=log,stderr=subprocess.STDOUT,check=True)
-    assert 'GGA_BRANCH_REEXPORT_COMPLETE' in (out/'native.out').read_text()
+    import tempfile
+    out=R/f'L{L:02}/native';out.parent.mkdir(parents=True,exist_ok=True)
+    identity={str(folder(L,i)/'DENSITY.bin'):input_digest(folder(L,i)/'DENSITY.bin') for i in range(11)}
+    identity['binary']=input_digest(Path(ENERGY['native_binary']))
+    names=[f'case_{i:02}_{suffix}' for i in range(11) for suffix in ('ENERGY.dat','TRUE.bin')]
+    complete=False
+    try:
+        report=json.loads((out/'COMPLETE.json').read_text())
+        if report['inputs']!=identity:raise ValueError(f'Native density inputs changed: {out}')
+        complete=set(report['files'])==set(names) and all(input_digest(out/name)==report['files'][name] for name in names)
+    except (OSError,KeyError,json.JSONDecodeError):pass
+    if not complete:
+        archive_incomplete(out)
+        with tempfile.TemporaryDirectory(prefix='.native_',dir=out.parent) as tmp:
+            stage=Path(tmp)/'native';stage.mkdir()
+            input_file(stage,L);(stage/'input_list.txt').write_text('11\n'+''.join(f'case_{i:02} "{folder(L,i)}/DENSITY.bin" 0 0 1\n' for i in range(11)))
+            try:
+                with (stage/'native.out').open('w') as log:
+                    subprocess.run([str(Path(ENERGY['native_binary'])),'grid.in'],cwd=stage,stdout=log,stderr=subprocess.STDOUT,check=True)
+            except BaseException:
+                stage.rename(out)
+                raise
+            if 'GGA_BRANCH_REEXPORT_COMPLETE' not in (stage/'native.out').read_text():raise RuntimeError('Incomplete native evaluation')
+            for i in range(11):
+                ee=np.loadtxt(stage/f'case_{i:02}_ENERGY.dat')
+                if ee.size<7 or not np.isfinite(ee).all():raise ValueError('Invalid native energy output')
+                field=read_density(stage/f'case_{i:02}_TRUE.bin',L)
+                if not np.isfinite(field).all():raise ValueError('Nonfinite native potential output')
+            save(stage/'COMPLETE.json',dict(inputs=identity,files={name:input_digest(stage/name) for name in names}))
+            stage.rename(out)
+    # Recreate these cheap summaries even if interruption followed native publication.
     for case in range(11):
         p=folder(L,case);ee=np.loadtxt(out/f'case_{case:02}_ENERGY.dat');n=np.load(p/'DENSITY.npz')['N'];eu,_=hubbard(n);b=json.loads((p/'ELECTRONIC.json').read_text());terms=dict(band_free=b['F'],minus_active_potential=-b['band']+b['bare'],EH=ee[0]*RY,Exc=ee[1]*RY,minus_core=-ee[2]*RY,ionic_density=ee[6]*RY,EU=eu)
         save(p/'ENERGY.json',dict(terms=terms,energy=sum(terms.values()),constant_reference_excluded=True))
-    save(out/'COMPLETE.json',dict(done=True))
 
 def potential_stage(L,case,z,paths,ops):
     p=folder(L,case);mu=json.loads((p/'MU.json').read_text())['mu'];field=grid_to_cells(read_density(R/f'L{L:02}/native/case_{case:02}_TRUE.bin',L),L)*RY
     nt=np.load(p/'DENSITY.npz')['N'];_,vu=hubbard(nt);numerator=0.;denominator=0.
     for ki,k in points(L,z):
         dest=p/f'adjoint_{ki:04}.npz'
-        if dest.exists():
+        if valid_npz(dest,{'Ae':(60*L*L,60*L*L),'numerator':(),'denominator':()}):
             a=np.load(dest);numerator+=float(a['numerator']);denominator+=float(a['denominator']);continue
         b=np.load(p/f'k_{ki:04}.npz');e,Q,H=b['e'],b['Q'],b['H'];h0,aa=load_operators(ops[ki]);psi=np.load(paths[ki],mmap_mode='r')
         A=H-h0-fold_project(psi,field,L)-sum(a.conj().T@v@a for a,v in zip(aa,vu));ae=Q.conj().T@A@Q;f,fp,_=fermi(e,mu)
-        num=float(np.dot(fp,np.diag(ae).real))/32;den=float(fp.sum())/32;np.savez(dest,Ae=ae,numerator=num,denominator=den);numerator+=num;denominator+=den
+        num=float(np.dot(fp,np.diag(ae).real))/32;den=float(fp.sum())/32;atomic_npz(dest,Ae=ae,numerator=num,denominator=den);numerator+=num;denominator+=den
         print('NATIVE_PROJECTED',L,case,ki,flush=True)
     save(p/f'alpha_z{z}.json',dict(numerator=numerator,denominator=denominator))
 
@@ -247,12 +309,12 @@ def torque_stage(L,z,rvr,ops):
             derivs=[derivative(oldcase(L,case)/f'coeff/dsite_{s:04}.bin') for s in sites]
             for ki,k in points(L,z):
                 dest=p/f'torque_k{ki:04}.npz'
-                if dest.exists():continue
+                if valid_npz(dest,{'Ae':(60*L*L,60*L*L),'numerator':(),'denominator':()}):continue
                 b=np.load(p/f'k_{ki:04}.npz');e,Q=b['e'],b['Q'];ae=np.load(p/f'adjoint_{ki:04}.npz')['Ae'];ae.flat[::len(e)+1]-=alpha;f,fp,_=fermi(e,mu);Z=Q@(loewner(e,f,fp)*ae)@Q.conj().T;G=fold_unitary(L,k)
                 densities.append(-G.conj().T@Z@G);entries.append((case,ki,k,dest,sites));ds.append(derivs)
         if entries:
             vals,im,stats=contract_batch(rvr,OLD/'basis/pure_H0.au',np.array([a[2] for a in entries]),np.array(densities),ds[0],workers=1,derivatives_by_point=ds,projectors_by_point=[np.load(ops[a[1]]/'native_projectors.npy',mmap_mode='r') for a in entries])
-            for row,v,imag in zip(entries,vals,im):np.savez(row[3],torque=v,sites=row[4],imaginary=imag)
+            for row,v,imag in zip(entries,vals,im):atomic_npz(row[3],torque=v,sites=row[4],imaginary=imag)
             save(R/f'L{L:02}/torque_batch_{z}_{chunk[0]}.json',stats)
 
 def collect(L):
@@ -279,25 +341,38 @@ def prepare_coefficients(L,z):
         case=definition['angle_configurations'][i]
         assert (case['perturb_site_native_1based'],case['angle_deg'])==(site,angle)
         if i%8!=z:continue
-        out=oldcase(L,i);out.mkdir(parents=True,exist_ok=True)
-        base=dict(np.load(ROOT/f'inputs/L{L:02}/structure.npz'))
-        if site is not None:
-            a=np.deg2rad(angle);v=base['spins'][site-1].copy()
-            base['spins'][site-1]=[np.cos(a)*v[0]+np.sin(a)*v[2],v[1],-np.sin(a)*v[0]+np.cos(a)*v[2]]
-        np.savez(out/'structure.npz',**base)
+        out=oldcase(L,i)
+        base=spin_structure(L,case)
         sites=[1] if i==0 or i>=7 else [1,*targets]
-        coefficients(out/'structure.npz',out/'coeff',sites,.001)
+        if str(L) in ENERGY.get('reuse_cases',{}):
+            if not valid_coefficients(out/'coeff',coefficient_identity(base,sites,.001)):
+                raise ValueError(f'External coefficients incomplete or unbound: {out}')
+        else:
+            out.mkdir(parents=True,exist_ok=True)
+            atomic_npz(out/'structure.npz',**base)
+            coefficients(out/'structure.npz',out/'coeff',sites,.001)
     barrier(f'coefficients_L{L}',z)
 
 def main(z):
-    compute_node();require_regression();binding();assert frozen()==13
+    compute_node()
     if not 0<=z<8 or not SIZES or len(set(SIZES))!=len(SIZES) or any(L not in (4,6,8) for L in SIZES):
         raise ValueError('Require kz worker 0..7 and distinct sizes from 4,6,8')
     R.mkdir(parents=True,exist_ok=True)
     SHARED.mkdir(parents=True,exist_ok=True)
+    start_attempt(z)
+    check_regression();binding();assert frozen()==13
     identity=cache_identity();bind_cache(identity)
+    spin_files={str(ROOT/f'inputs/L{L:02}'/name):input_digest(ROOT/f'inputs/L{L:02}'/name) for L in SIZES for name in ('structure.npz','CASE.json')}
+    spin_files['native_binary']=input_digest(Path(ENERGY['native_binary']))
+    for root in ENERGY.get('reuse_cases',{}).values():
+        for path in sorted(Path(root).glob('case_*/coeff/*')):
+            if path.is_file():spin_files[str(path)]=input_digest(path)
+    for path in sorted(Path(ENERGY['pseudo_dir']).glob('*.upf')):spin_files[str(path)]=input_digest(path)
+    bind_inputs(R,dict(shared=identity,spin=spin_files,energy=ENERGY),ignored=('attempts','worker_locks'))
+    barrier('inputs',z)
+    if z==0:(R/'COMPLETE.json').unlink(missing_ok=True)
     for L in SIZES:
-        if str(L) not in ENERGY.get('reuse_cases',{}):prepare_coefficients(L,z)
+        prepare_coefficients(L,z)
     meta=json.loads((INTERFACE/'V_func_tmp/V_FUNC.json').read_text());dv=abs(np.linalg.det(np.array(meta['primitive_cell_A'])/.529177210903))/NG
     slab=stage_bloch(z);st=static(OLD/'basis/pure_H0.au');reference(z,slab,dv,identity,st);background(z,dv)
     cached=CONFIG.get('rvr_slices',{}).get(str(z))
@@ -319,7 +394,7 @@ def main(z):
             if z==0:assemble_density(L,case,dv)
         barrier(f'all_density_L{L}',z)
         if z==0:native(L)
-        wait(R/f'L{L:02}/native/COMPLETE.json')
+        barrier(f'native_L{L}',z)
         for case in range(11):potential_stage(L,case,z,paths,ops)
         barrier(f'potentials_L{L}',z);torque_stage(L,z,rvr,ops);barrier(f'torques_L{L}',z)
         if z==0:collect(L)
@@ -328,5 +403,5 @@ def main(z):
 if __name__=='__main__':
     try:main(int(sys.argv[1]))
     except BaseException as e:
-        if not (R/'FAILURE.json').exists():save(R/'FAILURE.json',dict(worker=int(sys.argv[1]),error=repr(e)))
+        if ATTEMPT is not None:save(ATTEMPT/'FAILURE.json',dict(worker=int(sys.argv[1]),error=repr(e)))
         raise

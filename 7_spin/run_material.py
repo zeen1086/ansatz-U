@@ -12,7 +12,8 @@ import time
 import numpy as np
 from scipy.special import erfc
 from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, SPINS, PYTHON, SIGMA, SOURCE
-from common import compute_node, run, save, load_h, chemical_potential, require_regression,require_calculation
+from common import compute_node, run, save, load_h, chemical_potential, check_regression, quality_check
+from common import atomic_npz, valid_npz, valid_json, archive_incomplete, bind_inputs, input_digest, arrays_digest
 from torque_contract import derivative,contract_batch
 
 
@@ -53,13 +54,12 @@ def run_native(coeff: Path, k: np.ndarray, out: Path, components: bool, *, rvr: 
 
 
 def native(coeff: Path, k: np.ndarray, out: Path, components: bool=False) -> Path:
-    out.mkdir(parents=True,exist_ok=True);result=out/'H.k000001.h'
-    if (out/'COMPLETE.json').exists(): return result
-    if (out/'H.index').exists(): raise RuntimeError(f'Incomplete native task requires inspection: {out}')
-    seconds=run_native(coeff,k[None],out,components)
-    if not result.exists(): raise RuntimeError('Native calculation did not produce H')
-    save(out/'COMPLETE.json',dict(seconds=seconds))
-    return result
+    # The derivative header carries the same supercell size as the value coefficients.
+    with coeff.open('rb') as f:
+        f.seek(16); length=int(np.fromfile(f,'<i4',4)[2])
+    out.parent.mkdir(parents=True,exist_ok=True)
+    native_batch(coeff,k[None],[out],out.parent,60*length*length,components)
+    return out/'H.k000001.h'
 
 
 def native_batch(coeff: Path, k: np.ndarray, directories: list[Path], base: Path,
@@ -74,20 +74,23 @@ def native_batch(coeff: Path, k: np.ndarray, directories: list[Path], base: Path
     expected=16*dimension**2
     basis=json.loads((WORK/'RVR/PROJECTION.json').read_text())['basis_id']
     ids=[CONFIG['model_id'],basis]
+    identity=dict(coeff=input_digest(coeff),rvr=input_digest(rvr or WORK/'RVR/B_general'),
+                  background=input_digest(WORK/'basis/pure_H0.au'),binary=input_digest(BUILD/'local/cal_Hsk'),
+                  dimension=dimension,components=components)
+    identities=[dict(identity,k=list(map(float,point[:3])),background_cache=None if background_files is None else input_digest(background_files[i])) for i,point in enumerate(k)]
     for index,out in enumerate(directories):
         if (out/'COMPLETE.json').is_file():
-            metadata=(out/'H.index').read_text().splitlines()
-            recorded=np.array(metadata[4].split()[1:4],float)
-            if ([s.strip() for s in metadata[2:4]]!=ids or
-                    not np.allclose(recorded,k[index,:3],rtol=0,atol=1e-12)):
-                raise ValueError(f'Completed checkpoint has different model, basis or k point: {out}')
-            for suffix in suffixes:
-                if (out/f'H.k000001.{suffix}').stat().st_size!=expected:
-                    raise ValueError(f'Invalid completed Hamiltonian checkpoint: {out}')
-        elif out.exists():
-            raise RuntimeError(f'Archive the incomplete native task before resuming: {out}')
-        else:
-            missing.append(index)
+            try:
+                recorded=json.loads((out/'COMPLETE.json').read_text())
+            except (OSError,ValueError):recorded={}
+            if recorded and recorded.get('inputs') != identities[index]:
+                raise ValueError(f'Completed Hamiltonian inputs changed or unbound: {out}')
+            names=['H.index',*[f'H.k000001.{suffix}' for suffix in suffixes]]
+            if recorded.get('files') and set(recorded['files'])==set(names) and all(
+                    (out/name).is_file() and input_digest(out/name)==recorded['files'][name] for name in names):
+                continue
+        archive_incomplete(out)
+        missing.append(index)
     if not missing:
         return
     with tempfile.TemporaryDirectory(prefix='.cal_Hsk_batch_',dir=base) as tmp:
@@ -115,7 +118,7 @@ def native_batch(coeff: Path, k: np.ndarray, directories: list[Path], base: Path
             head=metadata[1].split();head[2]='1';row[0]='1';row[4]='1.0'
             (point/'H.index').write_text('\n'.join([metadata[0],' '.join(head),*metadata[2:4],' '.join(row)])+'\n')
             np.savetxt(point/'k.dat',np.r_[k[index,:3],1.][None],header='1',comments='',fmt='%.17g')
-            save(point/'COMPLETE.json',dict(seconds=seconds/len(missing),batch_seconds=seconds,batch_size=len(missing)))
+            save(point/'COMPLETE.json',dict(inputs=identities[index],files={name:input_digest(point/name) for name in ['H.index',*[f'H.k000001.{suffix}' for suffix in suffixes]]},seconds=seconds/len(missing),batch_seconds=seconds,batch_size=len(missing)))
         for slot,index in enumerate(missing,1):
             out=directories[index];out.parent.mkdir(parents=True,exist_ok=True)
             (staged/f'point_{slot}').rename(out)
@@ -128,10 +131,52 @@ def kz_groups(k: np.ndarray):
             yield members[start:start+16]
 
 
+def coefficient_identity(structure, sites, step):
+    return dict(structure=arrays_digest(structure),sites=list(sites),step=step,
+                model=input_digest(INTERFACE/'V_func_tmp/V_FUNC.json'),
+                evaluator=input_digest(SOURCE/'local_vfunc.py'))
+
+
+def valid_coefficients(directory, identity):
+    try:
+        record=json.loads((directory/'CHECKPOINT.json').read_text())
+        if record['inputs']!=identity:raise ValueError(f'Coefficient inputs changed: {directory}')
+        expected=['PREDICTION.json','value.bin',*[f'dsite_{i:04}.bin' for i in identity['sites']]]
+        return set(record['files'])==set(expected) and all(input_digest(directory/name)==record['files'][name] for name in expected)
+    except (OSError,KeyError,json.JSONDecodeError):return False
+
+
 def coefficients(structure: Path, directory: Path, sites: list[int], step: float) -> None:
-    if (directory/'PREDICTION.json').exists(): return
-    run(PYTHON,SOURCE/'local_vfunc.py','evaluate','--model',INTERFACE/'V_func_tmp',
-        '--structure',structure,'--output',directory,'--derivative-sites',*sites,'--step',step)
+    with np.load(structure) as data:identity=coefficient_identity(dict(data),sites,step)
+    import fcntl
+    directory.parent.mkdir(parents=True,exist_ok=True)
+    with (directory.parent/(directory.name+'.lock')).open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        if valid_coefficients(directory,identity):return
+        archive_incomplete(directory)
+        with tempfile.TemporaryDirectory(prefix='.coeff_',dir=directory.parent) as tmp:
+            staged=Path(tmp)/'coeff'
+            run(PYTHON,SOURCE/'local_vfunc.py','evaluate','--model',INTERFACE/'V_func_tmp',
+                '--structure',structure,'--output',staged,'--derivative-sites',*sites,'--step',step)
+            names=['PREDICTION.json','value.bin',*[f'dsite_{i:04}.bin' for i in sites]]
+            save(staged/'CHECKPOINT.json',dict(inputs=identity,files={name:input_digest(staged/name) for name in names}))
+            staged.rename(directory)
+
+
+def spin_structure(length, case):
+    with np.load(ROOT/f'inputs/L{length:02}/structure.npz') as data:s=dict(data)
+    site=case['perturb_site_native_1based']
+    if site is not None:
+        angle=np.deg2rad(case['angle_deg']);v=s['spins'][site-1].copy()
+        s['spins'][site-1]=[np.cos(angle)*v[0]+np.sin(angle)*v[2],v[1],-np.sin(angle)*v[0]+np.cos(angle)*v[2]]
+    return s
+
+
+def bind_case(length, definition, case, out, mesh, step):
+    files=[INTERFACE/'V_func_tmp/V_FUNC.json',WORK/'RVR/B_general',WORK/'RVR/PROJECTION.json',WORK/'basis/pure_H0.au',BUILD/'local/cal_Hsk']
+    files += [Path(__file__).with_name(name) for name in ('run_material.py','common.py','kz_production.py','torque_contract.py')]
+    bind_inputs(out,dict(structure=arrays_digest(spin_structure(length,case)),definition=definition,
+                        case=case,mesh=mesh,step=step,files={str(f):input_digest(f) for f in files}))
 
 
 def regression_assemble() -> None:
@@ -140,7 +185,7 @@ def regression_assemble() -> None:
     for name in ('Neel_anchor','fm'):
         row=out/name;row.mkdir(exist_ok=True)
         base['spins']=data['u'][data['names'].tolist().index(name)][[0,2,1,3]]
-        np.savez(row/'structure.npz',**base)
+        atomic_npz(row/'structure.npz',**base)
         coefficients(row/'structure.npz',row/'coeff',[],.001)
         for group in kz_groups(k):
             directories=[row/f'k_{ki:04}' for ki in group]
@@ -167,25 +212,20 @@ def map_k(k: np.ndarray,worker) -> None:
 
 
 def spectra(length: int, index: int, mesh: int, step: float) -> None:
-    require_calculation(length);binding();definition,case,out=case_root(length,index,mesh,step)
+    check_regression();binding();definition,case,out=case_root(length,index,mesh,step)
+    bind_case(length,definition,case,out,mesh,step)
     out.mkdir(parents=True,exist_ok=True);start=time.monotonic()
-    if (out/'SPECTRA.json').exists() and (out/'SPECTRA.npz').exists(): return
-    s=dict(np.load(ROOT/f'inputs/L{length:02}/structure.npz'))
-    site=case['perturb_site_native_1based']; angle=np.deg2rad(case['angle_deg'])
-    if site is not None:
-        v=s['spins'][site-1].copy()
-        s['spins'][site-1]=[np.cos(angle)*v[0]+np.sin(angle)*v[2],v[1],-np.sin(angle)*v[0]+np.cos(angle)*v[2]]
-    np.savez(out/'structure.npz',**s)
+    s=spin_structure(length,case)
+    atomic_npz(out/'structure.npz',**s)
     coefficients(out/'structure.npz',out/'coeff',case['readout_sites_native_1based'],step)
     k=np.array([[x/mesh,y/mesh,z/8,1/(mesh*mesh*8)] for x in range(mesh) for y in range(mesh) for z in range(8)])
     energies=[None]*len(k);timing=[0.]*len(k);dimension=definition['dimension']
     def spectrum_k(ki):
         target=out/f'k_{ki:04}';tick=time.monotonic()
         hfile=target/'value/H.k000001.h'
-        if not (target/'eigensystem.npz').exists():
+        if not valid_npz(target/'eigensystem.npz',{'e':(dimension,),'v':(dimension,dimension)}):
             h=load_h(hfile,dimension);e,v=np.linalg.eigh(h)
-            temp=target/'eigensystem.partial.npz'
-            np.savez(temp,e=e,v=v);temp.replace(target/'eigensystem.npz');del h,v
+            atomic_npz(target/'eigensystem.npz',e=e,v=v);del h,v
         with np.load(target/'eigensystem.npz') as z: energies[ki]=z['e']
         timing[ki]=time.monotonic()-tick;print('SPECTRUM',length,index,ki,timing[ki],flush=True)
     for group in kz_groups(k):
@@ -193,15 +233,17 @@ def spectra(length: int, index: int, mesh: int, step: float) -> None:
         native_batch(out/'coeff/value.bin',k[group],directories,out,dimension)
         map_k(k[group],lambda i:spectrum_k(int(group[i])))
     energies=np.array(energies);mu=chemical_potential(energies,k[:,3],definition['electrons'])
-    np.savez(out/'SPECTRA.npz',k=k,e=energies,mu=mu)
+    atomic_npz(out/'SPECTRA.npz',k=k,e=energies,mu=mu)
     save(out/'SPECTRA.json',dict(status='COMPLETE',L=length,case=case,mesh=[mesh,mesh,8],
          derivative_step_rad=step,seconds=time.monotonic()-start,k_seconds=timing,mu_eV=mu,
          electrons=definition['electrons'],model_id=CONFIG['model_id']))
 
 
 def torque(length: int,index: int,mesh: int,step: float) -> None:
-    require_calculation(length);binding();definition,case,out=case_root(length,index,mesh,step)
-    if (out/'TORQUE.json').exists(): return
+    check_regression();binding();definition,case,out=case_root(length,index,mesh,step)
+    bind_case(length,definition,case,out,mesh,step)
+    if valid_json(out/'TORQUE.json',['torque_eV','F_eV','sites']): return
+    spectra(length,index,mesh,step)
     with np.load(out/'SPECTRA.npz') as z: k,e,mu=z['k'],z['e'],float(z['mu'])
     sites=case['readout_sites_native_1based'];nd=definition['dimension'];start=time.monotonic()
     derivatives=[derivative(out/f'coeff/dsite_{site:04}.bin') for site in sites]
@@ -209,7 +251,7 @@ def torque(length: int,index: int,mesh: int,step: float) -> None:
     # The PBS shell capped the old per-point readers. Here only one thread reads RVR.
     workers=int(os.environ.get('K_WORKERS',os.environ.get('V1_K_WORKERS','1')))
     for group in kz_groups(k):
-        missing=[int(ki) for ki in group if not (out/f'k_{ki:04}/TORQUE.npz').exists()]
+        missing=[int(ki) for ki in group if not valid_npz(out/f'k_{ki:04}/TORQUE.npz',['torque','imaginary','count','F'])]
         if missing:
             tick=time.monotonic()
             densities=np.empty((len(missing),nd,nd),dtype=np.complex128)
@@ -234,33 +276,33 @@ def torque(length: int,index: int,mesh: int,step: float) -> None:
             del densities
             for slot,ki in enumerate(missing):
                 part=out/f'k_{ki:04}/TORQUE.npz'
-                temp=part.with_name('TORQUE.partial.npz')
-                np.savez(temp,torque=ts[slot],imaginary=im[slot],**point_stats[slot])
-                temp.replace(part)
+                atomic_npz(part,torque=ts[slot],imaginary=im[slot],**point_stats[slot])
             print('TORQUE_KZ_BATCH',json.dumps(dict(L=length,case=index,kz=float(k[missing[0],2]),
                   k_indices=missing,workers=min(workers,len(missing)),seconds=time.monotonic()-tick,**measure)),flush=True)
         for ki in group:
             with np.load(out/f'k_{ki:04}/TORQUE.npz') as z:
                 values[ki]=z['torque'];imaginaries[ki]=float(z['imaginary'])
                 counts[ki]=float(z['count']);energies[ki]=float(z['F'])
-            # Remove scratch only after publishing the point's torque.
-            paths=[out/f'k_{ki:04}/dsite_{site:04}/H.k000001.h' for site in sites]
-            if index!=0:
-                paths.extend((out/f'k_{ki:04}/value/H.k000001.h',out/f'k_{ki:04}/eigensystem.npz'))
-            for path in paths:path.unlink(missing_ok=True)
             print('TORQUE',length,index,ki,flush=True)
     result=dict(status='COMPLETE',L=length,case=case,sites=sites,
                 torque_eV=(k[:,3]@np.array(values)).tolist(),F_eV=float(k[:,3]@energies),
                 electron_error=float(abs(k[:,3]@counts-definition['electrons'])),
                 imaginary_gradient_eV=max(imaginaries),seconds=time.monotonic()-start,
                 mesh=[mesh,mesh,8],derivative_step_rad=step)
-    if result['electron_error']>1e-8: raise ValueError('Electron count changed')
+    quality_check(result['electron_error']<=1e-8, f"Electron count error: {result['electron_error']}")
     save(out/'TORQUE.json',result)
+    # Cleanup only after the entire case is published, never while it is resumable.
+    for ki in range(len(k)):
+        for site in sites:(out/f'k_{ki:04}/dsite_{site:04}/H.k000001.h').unlink(missing_ok=True)
+        if index!=0:
+            (out/f'k_{ki:04}/value/H.k000001.h').unlink(missing_ok=True)
+            (out/f'k_{ki:04}/eigensystem.npz').unlink(missing_ok=True)
 
 
 def collect(length: int,mesh: int,step: float) -> None:
-    require_regression();definition,_,out=case_root(length,0,mesh,step);out=out.parent
+    check_regression();definition,_,out=case_root(length,0,mesh,step);out=out.parent
     cases=definition['angle_configurations']
+    for i,case in enumerate(cases):bind_case(length,definition,case,out/f'case_{i:02}',mesh,step)
     records=[json.loads((out/f'case_{i:02}/TORQUE.json').read_text()) for i in range(len(cases))]
     def value(perturb,angle,target):
         i=next(i for i,c in enumerate(cases) if c['perturb_site_native_1based']==perturb and c['angle_deg']==angle)

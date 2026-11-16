@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from scipy.special import erfc
 from density_map import fold_unitary
+from common import quality_check
 RY=13.605693122994;SIGMA=.01*RY
 
 def trace(a,b):
@@ -72,7 +73,9 @@ def operators(L,k,rr,hr,pr):
 def metric(psi):
     n=len(psi);S=np.zeros((60*n,60*n),complex);T=S.copy();err=0.
     for i,w in enumerate(psi):
-        s=w.conj().T@w;e,u=np.linalg.eigh(s);assert e.min()>.1,'Rank-deficient Wannier density map'
+        s=w.conj().T@w;e,u=np.linalg.eigh(s)
+        if not np.isfinite(e).all() or e.min()<=0:raise ValueError('Nonpositive or nonfinite Wannier overlap')
+        quality_check(e.min()>.1, f'Small Wannier overlap eigenvalue: {e.min()}')
         t=(u/np.sqrt(e))@u.conj().T;sl=slice(60*i,60*(i+1));S[sl,sl]=np.kron(s,np.eye(2));T[sl,sl]=np.kron(t,np.eye(2));err=max(err,float(np.max(abs(s-np.eye(30)))))
     assert np.max(abs(T@S@T-np.eye(60*n)))<1e-10
     return S,T,err

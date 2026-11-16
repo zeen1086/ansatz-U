@@ -108,16 +108,23 @@ class ProductionEnergyTest(unittest.TestCase):
             root = Path(tmp)
             native = root/'L04/native'
             native.mkdir(parents=True)
+            binary=root/'qe';binary.write_bytes(b'fixture')
             for i in range(11):
                 case = root/f'L04/case_{i:02}'
                 case.mkdir()
                 np.savez(case/'DENSITY.npz', N=n)
+                (case/'DENSITY.bin').write_bytes(b'density')
                 (case/'ELECTRONIC.json').write_text(json.dumps(dict(F=free, band=band, bare=bare)))
                 np.savetxt(native/f'case_{i:02}_ENERGY.dat', qe[None])
             def fake_native(*args, **kwargs):
+                for i in range(11):
+                    np.savetxt(kwargs['cwd']/f'case_{i:02}_ENERGY.dat',qe[None])
+                    (kwargs['cwd']/f'case_{i:02}_TRUE.bin').write_bytes(b'field')
                 kwargs['stdout'].write('GGA_BRANCH_REEXPORT_COMPLETE')
                 kwargs['stdout'].flush()
             with patch.object(complete_energy, 'R', root), \
+                 patch.dict(complete_energy.ENERGY, {'native_binary':str(binary)}), \
+                 patch.object(complete_energy, 'read_density', return_value=np.zeros((1,4))), \
                  patch.object(complete_energy, 'input_file'), \
                  patch.object(complete_energy.subprocess, 'run', side_effect=fake_native):
                 complete_energy.native(4)

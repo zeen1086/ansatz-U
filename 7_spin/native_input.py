@@ -5,9 +5,11 @@ import numpy as np
 from common import CONFIG, INTERFACE
 
 def write_density(path,values,L):
-    with path.open('wb') as f:
+    temp=path.with_name(path.name+'.partial')
+    with temp.open('wb') as f:
         for raw in [np.array([40*L,40*L,36],dtype='<i4').tobytes(),np.asarray(values,dtype='<f8').tobytes(order='F')]:
             f.write(struct.pack('<i',len(raw)));f.write(raw);f.write(struct.pack('<i',len(raw)))
+    temp.replace(path)
 
 def read_density(path,L):
     with path.open('rb') as f:
