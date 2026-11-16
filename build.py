@@ -29,7 +29,8 @@ def locations(source: Path) -> tuple[Path, Path]:
 
 
 def dependencies(source: Path) -> list[Path]:
-    if source.parent.name == 'local' and source.name in ('cal_RVR_split.f90', 'combine.f90', 'cal_Hsk.f90'):
+    if source.resolve() in (ROOT/'6_RVR/cal_RVR_split.f90', ROOT/'6_RVR/combine.f90',
+                            ROOT/'7_spin/local/cal_Hsk.f90'):
         return [ROOT / name for name in ('common/numerics.f90', '6_RVR/frozen_io.f90',
                 '4_potential/fit/joint_npy.f90',
                 '6_RVR/local_vfunc.f90', '6_RVR/local_rvr.f90')] + [source]

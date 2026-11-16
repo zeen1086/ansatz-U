@@ -21,9 +21,9 @@ $(BUILD)/local/.built: $(LOCAL_SOURCES) | $(BUILD)
 	mkdir -p $(BUILD)/local
 	cd $(BUILD)/local && $(FC) $(FFLAGS) -c $(LOCAL_SOURCES)
 	touch $@
-$(BUILD)/local/cal_RVR_split: $(ROOT)/6_RVR/local/cal_RVR_split.f90 $(BUILD)/local/.built
+$(BUILD)/local/cal_RVR_split: $(ROOT)/6_RVR/cal_RVR_split.f90 $(BUILD)/local/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
-$(BUILD)/local/combine: $(ROOT)/6_RVR/local/combine.f90 $(BUILD)/local/.built
+$(BUILD)/local/combine: $(ROOT)/6_RVR/combine.f90 $(BUILD)/local/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
 $(BUILD)/local/cal_Hsk: $(ROOT)/7_spin/local/cal_Hsk.f90 $(BUILD)/local/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)

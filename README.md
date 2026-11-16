@@ -14,7 +14,7 @@ LaNiO₂ 的 Fortran 势拟合、Wannier/RVR、Hamiltonian、能带和转矩工�
 
 ## 当前 V1 流程
 
-[RVR 目录与依赖](6_RVR/README.md)只保留第30轮冻结 V1 需要的实现。完整操作见 [V1 → V_func_tmp → 原生 RVR → cal_Hsk](6_RVR/local/README.md)。固定几何 L×L×1 使用全部 V1 通道、完整复数 N 和反馈响应：
+[RVR 目录与依赖](6_RVR/README.md)只保留第30轮冻结 V1 需要的实现。完整操作见 [V1 → V_func_tmp → 原生 RVR → cal_Hsk](6_RVR/README.md)。固定几何 L×L×1 使用全部 V1 通道、完整复数 N 和反馈响应：
 
 ```text
 local_vfunc.py export / export-background
@@ -32,7 +32,7 @@ make local-rvr BUILD=/absolute/external/build
 
 `local_vfunc.py export` 的 `--code` 可指向本仓库 `4_potential/local/`。模型参数、Wannier、RVR 和计算输出均使用外部路径。背景由 `export-background` 生成纯 H0，当前组装为 `H0 + Hv + HB + HU`；`.au` 保持已有二进制布局，旧 KB/N0 占位字段只校验，不参与当前计算。
 
-新计算默认保留必要结果：RVR 合并成功后清除缓存/分片；单构型 `local_vfunc.py cal_Hsk` 完成后保留矩阵和汇总 JSON。调试时在对应命令添加 `--keep-intermediates`。生产续算需要的系数和检查点继续保留，具体规则见 [local 接口](6_RVR/local/README.md)。
+新计算默认保留必要结果：RVR 合并成功后清除缓存/分片；单构型 `local_vfunc.py cal_Hsk` 完成后保留矩阵和汇总 JSON。调试时在对应命令添加 `--keep-intermediates`。生产续算需要的系数和检查点继续保留，具体规则见 [local 接口](6_RVR/README.md)。
 
 [7_spin/production](7_spin/production/README.md)提供同 kz 批量组装、RVR 伴随收缩、节点本地切片，以及冻结补空间密度下的完整能量/转矩/J12。使用 [外部 JSON 配置模板](examples/7_spin/production.json)。完整能量读出与带自由能读出有不同定义；实现回归通过不等于独立 DFT 物理验证。
 
@@ -58,6 +58,6 @@ export ANSATZ_BUILD_DIR=/absolute/external/ansatz-build
 
 `V_split`读取 `polar2` 和显式映射文件：首行 `n_spins n_channels n_cells`，随后每个拆分胞一行1基自旋索引，胞按x/y/z排序、z最快；例见 `examples/4_potential/channel_map.dat`。输出保留原 `V1...`，并生成拟合直接读取的 `spinN/V_HYC_dp` 与 `spin_info`。
 
-若标签包含周期端点，历史五记录拟合模型可用 `make_R_vec base_V_HYC_dp fitted_extended_model output_model output_R_vec` 去掉端点；五条记录完整保留。拟合重启须使用与标签网格一致的模型。当前 V1 使用自身导出包，空间核与 Wannier 网格、平移及权重的匹配见 `6_RVR/local/README.md`。
+若标签包含周期端点，历史五记录拟合模型可用 `make_R_vec base_V_HYC_dp fitted_extended_model output_model output_R_vec` 去掉端点；五条记录完整保留。拟合重启须使用与标签网格一致的模型。当前 V1 使用自身导出包，空间核与 Wannier 网格、平移及权重的匹配见 `6_RVR/README.md`。
 
 `check.py` 执行离线测试；数值结果摘要见 `VALIDATION.md`，来源见 `PROVENANCE.md`。模型、波函数、缓存和运行输出通过外部路径提供。

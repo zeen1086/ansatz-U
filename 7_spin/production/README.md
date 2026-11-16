@@ -29,7 +29,7 @@ make local-rvr BUILD=/absolute/intel-build FC=ifort \
   LIBS='-mkl=parallel'
 ```
 
-V1 模型导出见 [local RVR 接口](../../6_RVR/local/README.md)。本仓库的
+V1 模型导出见 [local RVR 接口](../../6_RVR/README.md)。本仓库的
 `4_potential/local/` 保存逐字节复制的六个冻结推理源，可作为导出命令的 `--code`。
 导出后的 `interface/V_func_tmp` 含这些源及全部冻结模型参数，运行不依赖训练目录。
 
