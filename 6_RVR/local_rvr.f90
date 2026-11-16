@@ -108,18 +108,28 @@ contains
   enddo
  enddo
  close(u)
- if(loadfields) call read_fields(t)
+ if(loadfields) call read_fields(t,'full')
  end subroutine
  subroutine prepare_fields(path)
  character(*),intent(in)::path
  type(projection_data)::t
  type(local_potential)::m
  integer::d,g,x,y,z,u,ng
+ logical::exists
+ character(4096)::target
  real(dp)::point(3)
  real(dp),allocatable::v(:),f(:,:),means(:)
- call control(path,t,.false.);call read_vfunc(trim(model_path),m,.true.)
+ call control(path,t,.false.)
+ if(completed_projection(t)) return
+ target=trim(rvr_dir)//'/spatial_fields'
+ inquire(file=trim(target),exist=exists)
+ if(exists) then
+  call read_fields(t,'check')
+  write(*,'(a)') 'SPATIAL_FIELDS_REUSED';return
+ endif
+ call read_vfunc(trim(model_path),m,.true.)
  ng=t%ng;allocate(v(t%nc),f(ng,t%nc),means(m%np+1));means=0
- open(newunit=u,file=trim(rvr_dir)//'/spatial_fields',status='new',access='stream', &
+ open(newunit=u,file=trim(target)//'.partial',status='replace',access='stream', &
  form='unformatted',convert='little_endian')
  write(u) 'LANIO2_LGRID_V2 ',int([1,t%ng,t%nc,t%nd,m%np,0,0,0],int32),m%id,int(t%domain,int32)
  do d=1,t%nd
@@ -131,20 +141,27 @@ contains
  means=means+sum(f(:,:m%np+1),dim=1)/ng
  write(u) f
  enddo
- write(u) means;close(u)
+ write(u) means;call finish_write(u)
+ call read_fields(t,'check',trim(target)//'.partial')
+ call publish(trim(target))
  write(*,'(a,3i12)') 'SPATIAL_FIELDS ng channels domains=',ng,t%nc,t%nd
  end subroutine
- subroutine read_fields(t)
+ subroutine read_fields(t,mode,path)
  type(projection_data),intent(inout)::t
- integer::u,ios
+ character(*),intent(in)::mode
+ character(*),intent(in),optional::path
+ character(4096)::source
+ real(dp),allocatable::chunk(:,:)
+ integer::u,ios,d
  integer(int32)::head(8)
  integer,allocatable::domain(:,:)
  integer(int64)::bytes,expected
  character(16)::magic
  character(64)::id
- open(newunit=u,file=trim(rvr_dir)//'/spatial_fields',status='old',access='stream', &
+ source=trim(rvr_dir)//'/spatial_fields';if(present(path)) source=path
+ open(newunit=u,file=trim(source),status='old',access='stream', &
  form='unformatted',convert='little_endian',iostat=ios)
- call require(ios==0,'Run cal_RVR_split projection.nml 0 once before row projection')
+ call require(ios==0,'Run rvr prepare projection.nml before projecting missing rows')
  read(u,iostat=ios) magic,head,id
  call require(ios==0.and.magic=='LANIO2_LGRID_V2 '.and.id==t%m%id,'Wrong spatial cache model')
  call require(all(head==[1,t%ng,t%nc,t%nd,t%m%np,0,0,0]),'Wrong spatial cache dimensions')
@@ -152,9 +169,24 @@ contains
  expected=112_int64+8_int64*t%nd+8_int64*t%ng*t%nc*t%nd+8_int64*(t%m%np+1)
  call require(bytes==expected,'Spatial cache byte count mismatch')
  allocate(domain(2,t%nd));read(u) domain;call require(all(domain==t%domain),'Spatial domain changed')
- allocate(t%fields(t%ng,t%nc,t%nd),t%means(t%m%np+1));read(u,iostat=ios) t%fields,t%means;close(u)
- call require(ios==0.and.all(ieee_is_finite(t%fields)).and.all(ieee_is_finite(t%means)), &
- 'Truncated/nonfinite spatial cache')
+ allocate(t%means(t%m%np+1))
+ if(mode=='full') then
+  allocate(t%fields(t%ng,t%nc,t%nd));read(u,iostat=ios) t%fields
+  call require(ios==0,'Truncated spatial cache')
+  call require(all(ieee_is_finite(t%fields)),'Nonfinite spatial cache')
+ else if(mode=='check') then
+  allocate(chunk(t%ng,t%nc))
+  do d=1,t%nd
+   read(u,iostat=ios) chunk
+   call require(ios==0,'Truncated spatial cache')
+   call require(all(ieee_is_finite(chunk)),'Nonfinite spatial cache')
+  enddo
+ else
+  call require(mode=='means','Unknown spatial cache read mode')
+ endif
+ read(u,pos=expected-8_int64*(t%m%np+1)+1,iostat=ios) t%means;close(u)
+ call require(ios==0,'Truncated spatial means')
+ call require(all(ieee_is_finite(t%means)),'Nonfinite spatial means')
  end subroutine
  function row_path(i,k) result(path)
  integer,intent(in)::i,k
@@ -200,19 +232,35 @@ contains
  integer,intent(in)::column,kfirst,klast
  type(projection_data)::t
  complex(dp),allocatable::rawi(:,:),rawj(:,:),left(:,:),right(:,:),work(:,:),mat(:,:),kernel(:,:,:),overlap(:)
- integer::i,j,k,d,c,a,b,u,first,last
- call control(path,t,.true.);i=column
- call require(i>=1.and.i<=nwan,'Orbital row outside 1..nwan')
+ integer::i,j,k,d,c,a,b,u,first,last,ifirst,ilast
+ logical::exists
+ call control(path,t,.false.)
+ call require(column>=0.and.column<=nwan,'Orbital row outside 1..nwan')
  first=kfirst;last=klast;if(first==0) then
  first=1;last=t%nk
  endif
  call require(first>=1.and.last>=first.and.last<=t%nk,'Invalid kz shard')
+ if(completed_projection(t)) return
+ ifirst=column;ilast=column;if(column==0) then
+ ifirst=1;ilast=nwan
+ endif
  allocate(left(t%ng,t%nsxy),right(t%ng,t%nsxy),work(t%ng,t%nsxy),mat(t%nsxy,t%nsxy), &
  kernel(t%nr,t%nr,t%nc),overlap(t%ndiff))
- call read_wan(t,i,rawi)
+ do i=ifirst,ilast
  do k=first,last
+  inquire(file=trim(row_path(i,k)),exist=exists)
+  if(exists) then
+   call open_row(trim(row_path(i,k)),t,i,k,u)
+   do j=1,nwan
+    call read_block(u,overlap,kernel)
+   enddo
+   close(u);write(*,'(a,2i8)') 'RVR_ROW_REUSED orbital,kz=',i,k
+   cycle
+  endif
+  if(.not.allocated(t%fields)) call read_fields(t,'full')
+  if(.not.allocated(rawi)) call read_wan(t,i,rawi)
   call plane_wan(t,rawi,k,left)
-  open(newunit=u,file=trim(row_path(i,k)),status='new',access='stream',form='unformatted',convert='little_endian')
+  open(newunit=u,file=trim(row_path(i,k))//'.partial',status='replace',access='stream',form='unformatted',convert='little_endian')
   write(u) 'LANIO2_LROW_V2  ',int([1,t%m%np,t%nr,nwan,t%nk,t%ndiff,i,k],int32),t%m%id,basis_id
   write(u) int(t%xy,int32),int(t%difference,int32),t%kz(k),grid_weight
   do j=1,nwan
@@ -238,10 +286,15 @@ contains
     enddo
    enddo
    enddo
+   call check_block(overlap,kernel)
    write(u) overlap,kernel
   enddo
-  close(u)
+  call finish_write(u)
+  call open_row(trim(row_path(i,k))//'.partial',t,i,k,u);close(u)
+  call publish(trim(row_path(i,k)))
   write(*,'(a,2i8)') 'RVR_ROW_COMPLETE orbital,kz=',i,k
+ enddo
+ if(allocated(rawi)) deallocate(rawi)
  enddo
  end subroutine
  subroutine combine_rows(path,keep_intermediates)
@@ -249,56 +302,131 @@ contains
  logical,intent(in)::keep_intermediates
  type(projection_data)::t
  type(local_projected)::checked
- integer::u,v,i,j,k,ios
- integer(int32)::head(8)
- integer,allocatable::xy(:,:),difference(:,:)
+ integer::u,v,i,j,k
  complex(dp),allocatable::kernel(:,:,:),overlap(:)
+ character(4096)::target
+ call control(path,t,.false.)
+ target=trim(rvr_dir)//'/B_general'
+ if(.not.completed_projection(t)) then
+  ! The grid payload is not used in merging; seek directly to the means.
+  call read_fields(t,'means')
+  allocate(kernel(t%nr,t%nr,t%nc),overlap(t%ndiff))
+  open(newunit=v,file=trim(target)//'.partial',status='replace',access='stream', &
+   form='unformatted',convert='little_endian')
+  write(v) 'LANIO2_LRVR_V2  ',int([1,t%m%np,t%nr,nwan,t%nk,t%ndiff,0,0],int32),t%m%id,basis_id
+  write(v) t%m%cell,t%m%alpha,t%means,int(t%xy,int32),int(t%difference,int32),t%kz
+  do k=1,t%nk
+  do i=1,nwan
+   call open_row(trim(row_path(i,k)),t,i,k,u)
+   do j=1,nwan
+    call read_block(u,overlap,kernel)
+    write(v) overlap,kernel
+   enddo
+   close(u)
+  enddo
+  enddo
+  call finish_write(v)
+  call open_projected(trim(target)//'.partial',v,checked);close(v)
+  call publish(trim(target))
+ endif
+ if(.not.keep_intermediates) then
+  do k=1,t%nk
+  do i=1,nwan
+   call remove_file(trim(row_path(i,k)))
+   call remove_file(trim(row_path(i,k))//'.partial')
+  enddo
+  enddo
+  call remove_file(trim(rvr_dir)//'/spatial_fields')
+  call remove_file(trim(rvr_dir)//'/spatial_fields.partial')
+  call remove_file(trim(target)//'.partial')
+ endif
+ write(*,'(a)') 'B_GENERAL_COMPLETE'
+ end subroutine
+
+ subroutine open_row(path,t,i,k,u)
+ character(*),intent(in)::path
+ type(projection_data),intent(in)::t
+ integer,intent(in)::i,k
+ integer,intent(out)::u
+ integer::ios
+ integer(int32)::head(8)
+ integer::xy(2,t%nr),difference(2,t%ndiff)
  character(16)::magic
  character(64)::id,bid
  real(dp)::kz,weight
  integer(int64)::bytes,expected
- call control(path,t,.true.)
- allocate(kernel(t%nr,t%nr,t%nc),overlap(t%ndiff),xy(2,t%nr),difference(2,t%ndiff))
- open(newunit=v,file=trim(rvr_dir)//'/B_general',status='new',access='stream', &
- form='unformatted',convert='little_endian')
- write(v) 'LANIO2_LRVR_V2  ',int([1,t%m%np,t%nr,nwan,t%nk,t%ndiff,0,0],int32),t%m%id,basis_id
- write(v) t%m%cell,t%m%alpha,t%means,int(t%xy,int32),int(t%difference,int32),t%kz
- do k=1,t%nk
- do i=1,nwan
-  open(newunit=u,file=trim(row_path(i,k)),status='old',access='stream',form='unformatted',convert='little_endian',iostat=ios)
-  call require(ios==0,'Missing RVR orbital/kz row')
-  read(u,iostat=ios) magic,head,id,bid,xy,difference,kz,weight
-  call require(ios==0.and.magic=='LANIO2_LROW_V2  '.and.id==t%m%id.and.bid==basis_id,'Wrong RVR row provenance')
-  call require(all(head==[1,t%m%np,t%nr,nwan,t%nk,t%ndiff,i,k]).and.all(xy==t%xy).and. &
-   all(difference==t%difference).and.kz==t%kz(k).and.weight==grid_weight,'RVR row contract mismatch')
-  inquire(unit=u,size=bytes)
-  expected=192_int64+8_int64*(t%nr+t%ndiff)+16_int64*nwan*(t%ndiff+int(t%nr,int64)**2*t%nc)
-  call require(bytes==expected,'RVR row byte count mismatch')
-  do j=1,nwan
-   read(u,iostat=ios) overlap,kernel
-   call require(ios==0.and.all(ieee_is_finite(real(kernel,dp))).and.all(ieee_is_finite(aimag(kernel))).and. &
-    all(ieee_is_finite(real(overlap,dp))).and.all(ieee_is_finite(aimag(overlap))),'Nonfinite/truncated RVR row')
-   write(v) overlap,kernel
-  enddo
-  close(u)
+ open(newunit=u,file=path,status='old',access='stream',form='unformatted',convert='little_endian',iostat=ios)
+ call require(ios==0,'Missing RVR orbital/kz row: '//path)
+ read(u,iostat=ios) magic,head,id,bid,xy,difference,kz,weight
+ call require(ios==0,'Truncated RVR row header; archive the file before retrying: '//path)
+ call require(magic=='LANIO2_LROW_V2  '.and.id==t%m%id.and.bid==basis_id,'Wrong RVR row provenance: '//path)
+ call require(all(head==[1,t%m%np,t%nr,nwan,t%nk,t%ndiff,i,k]).and.all(xy==t%xy).and. &
+  all(difference==t%difference).and.kz==t%kz(k).and.weight==grid_weight,'RVR row contract mismatch: '//path)
+ inquire(unit=u,size=bytes)
+ expected=192_int64+8_int64*(t%nr+t%ndiff)+16_int64*nwan*(t%ndiff+int(t%nr,int64)**2*t%nc)
+ call require(bytes==expected,'RVR row byte count mismatch; archive the file before retrying: '//path)
+ end subroutine
+ subroutine read_block(u,overlap,kernel)
+ integer,intent(in)::u
+ complex(dp),intent(out)::overlap(:),kernel(:,:,:)
+ integer::ios
+ read(u,iostat=ios) overlap,kernel
+ call require(ios==0,'Truncated RVR block')
+ call check_block(overlap,kernel)
+ end subroutine
+ subroutine check_block(overlap,kernel)
+ complex(dp),intent(in)::overlap(:),kernel(:,:,:)
+ call require(all(ieee_is_finite(real(kernel,dp))).and.all(ieee_is_finite(aimag(kernel))).and. &
+  all(ieee_is_finite(real(overlap,dp))).and.all(ieee_is_finite(aimag(overlap))),'Nonfinite RVR block')
+ end subroutine
+ logical function completed_projection(t) result(exists)
+ type(projection_data),intent(in)::t
+ type(local_projected)::r
+ complex(dp),allocatable::kernel(:,:,:),overlap(:)
+ integer::u,i,j,k
+ character(4096)::path
+ path=trim(rvr_dir)//'/B_general';inquire(file=trim(path),exist=exists)
+ if(.not.exists) return
+ call open_projected(trim(path),u,r)
+ call require(r%model_id==t%m%id.and.r%basis_id==basis_id,'Completed RVR provenance mismatch')
+ call require(all([r%np,r%nr,r%nw,r%nk,r%ndiff]==[t%m%np,t%nr,nwan,t%nk,t%ndiff]), &
+  'Completed RVR dimensions mismatch')
+ call require(all(r%cell==t%m%cell).and.r%alpha==t%m%alpha.and.all(r%xy==t%xy).and. &
+  all(r%difference==t%difference).and.all(r%kz==t%kz),'Completed RVR geometry/kz mismatch')
+ allocate(kernel(r%nr,r%nr,r%nc),overlap(r%ndiff))
+ do k=1,r%nk
+ do i=1,r%nw
+ do j=1,r%nw
+  call read_block(u,overlap,kernel)
  enddo
  enddo
- close(v,iostat=ios)
- call require(ios==0,'Cannot finish B_general; projection intermediates retained')
- call open_projected(trim(rvr_dir)//'/B_general',v,checked);close(v)
- if(.not.keep_intermediates) then
-  do k=1,t%nk
-  do i=1,nwan
-   open(newunit=u,file=trim(row_path(i,k)),status='old',access='stream',form='unformatted',iostat=ios)
-   call require(ios==0,'Cannot reopen completed RVR row for cleanup')
-   close(u,status='delete',iostat=ios);call require(ios==0,'Cannot remove completed RVR row')
-  enddo
-  enddo
-  open(newunit=u,file=trim(rvr_dir)//'/spatial_fields',status='old',access='stream',form='unformatted',iostat=ios)
-  call require(ios==0,'Cannot reopen completed spatial cache for cleanup')
-  close(u,status='delete',iostat=ios);call require(ios==0,'Cannot remove completed spatial cache')
- endif
- write(*,'(a)') 'B_GENERAL_COMPLETE'
+ enddo
+ close(u);write(*,'(a)') 'B_GENERAL_REUSED'
+ end function
+ subroutine finish_write(u)
+ integer,intent(in)::u
+ integer::ios
+ close(u,iostat=ios)
+ call require(ios==0,'Cannot finish partial file; intermediates retained')
+ end subroutine
+ subroutine publish(path)
+ character(*),intent(in)::path
+ integer::ios
+ logical::exists
+ inquire(file=path,exist=exists)
+ call require(.not.exists,'Output appeared during calculation; use one writer per output: '//path)
+ call rename(path//'.partial',path,ios)
+ call require(ios==0,'Cannot publish completed partial file: '//path)
+ end subroutine
+ subroutine remove_file(path)
+ character(*),intent(in)::path
+ integer::u,ios
+ logical::exists
+ inquire(file=path,exist=exists);if(.not.exists) return
+ open(newunit=u,file=path,status='old',access='stream',form='unformatted',iostat=ios)
+ call require(ios==0,'Cannot reopen completed intermediate for cleanup: '//path)
+ close(u,status='delete',iostat=ios)
+ call require(ios==0,'Cannot remove completed intermediate: '//path)
  end subroutine
  subroutine open_projected(path,u,t)
  character(*),intent(in)::path

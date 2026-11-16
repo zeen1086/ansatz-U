@@ -16,14 +16,12 @@ LOCAL_SOURCES = $(ROOT)/common/numerics.f90 $(ROOT)/6_RVR/frozen_io.f90 $(ROOT)/
 LOCAL_OBJECTS = $(addprefix $(BUILD)/local/,numerics.o frozen_io.o joint_npy.o local_vfunc.o local_rvr.o)
 .PHONY: all legacy mpi joint local-rvr clean
 all: local-rvr joint legacy
-local-rvr: $(BUILD)/local/cal_RVR_split $(BUILD)/local/combine $(BUILD)/local/cal_Hsk
+local-rvr: $(BUILD)/local/rvr $(BUILD)/local/cal_Hsk
 $(BUILD)/local/.built: $(LOCAL_SOURCES) | $(BUILD)
 	mkdir -p $(BUILD)/local
 	cd $(BUILD)/local && $(FC) $(FFLAGS) -c $(LOCAL_SOURCES)
 	touch $@
-$(BUILD)/local/cal_RVR_split: $(ROOT)/6_RVR/cal_RVR_split.f90 $(BUILD)/local/.built
-	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
-$(BUILD)/local/combine: $(ROOT)/6_RVR/combine.f90 $(BUILD)/local/.built
+$(BUILD)/local/rvr: $(ROOT)/6_RVR/rvr.f90 $(BUILD)/local/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
 $(BUILD)/local/cal_Hsk: $(ROOT)/7_spin/local/cal_Hsk.f90 $(BUILD)/local/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)

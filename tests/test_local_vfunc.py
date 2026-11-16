@@ -87,7 +87,7 @@ class BackgroundExportTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):export_background(source,r/'pure.au')
 
 
-def run(binary: Path, destination: Path, *, batch_checks: bool=False):
+def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_binary: Path | None=None):
     rng = np.random.default_rng(141126)
     with tempfile.TemporaryDirectory(prefix='V1_native_', dir=destination) as tmp:
         r = Path(tmp); model=r/'V_func_tmp';wan=r/'wan';project=r/'rvr'
@@ -112,21 +112,67 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False):
         control.write_text("&local_projection\n"+'\n'.join(f" {k}='{v}'," for k,v in dict(
             model_path=model,wan_dir=wan,translations_path=r/'translations.dat',rvr_dir=project,
             kz_path=r/'kz.dat',basis_id=basis_id).items())+"\n nwan=30, grid_weight=1.\n/\n")
-        call(binary/'cal_RVR_split',control,0)
-        for i in range(1,31): call(binary/'cal_RVR_split',control,i)
-        rows=sorted(project.glob('B_general_*'))
-        assert len(rows)==60
-        last=rows[-1];saved=last.read_bytes();last.write_bytes(saved[:-1])
-        assert 'byte count mismatch' in call(binary/'combine',control,ok=False)
-        assert (project/'spatial_fields').is_file() and all(p.is_file() for p in rows)
-        (project/'B_general').unlink();last.write_bytes(saved)
-        call(binary/'combine',control,'--keep-intermediates')
+        # A stale partial is regenerated; a validated completed file is reused unchanged.
+        (project/'spatial_fields.partial').write_bytes(b'interrupted preparation')
+        call(binary/'rvr','prepare',control)
+        cache=project/'spatial_fields';stamp=cache.stat().st_mtime_ns
+        assert 'SPATIAL_FIELDS_REUSED' in call(binary/'rvr','prepare',control)
+        assert cache.stat().st_mtime_ns==stamp
+        call(binary/'rvr','project',control,1,1)
+        first=project/'B_general_1_kz1';stamp=first.stat().st_mtime_ns
+        (project/'B_general_1_kz2.partial').write_bytes(b'interrupted row')
+        call(binary/'rvr','project',control)
+        assert first.stat().st_mtime_ns==stamp
+        rows=sorted(project.glob('B_general_*'));assert len(rows)==60
+        last=project/'B_general_30_kz2';saved=last.read_bytes()
+        last.rename(Path(str(last)+'.partial'));Path(str(last)+'.partial').write_bytes(saved[:100])
+        call(binary/'rvr','project',control,30,2)
+        assert last.read_bytes()==saved
+        stamps={p:p.stat().st_mtime_ns for p in rows}
+        call(binary/'rvr','project',control)
+        assert all(p.stat().st_mtime_ns==stamps[p] for p in rows)
+        wrong=bytearray(saved);wrong[48:112]=b'x'*64;last.write_bytes(wrong)
+        assert 'provenance' in call(binary/'rvr','project',control,30,2,ok=False)
+        assert last.read_bytes()==wrong
+        head=struct.unpack_from('<8i',saved,16)
+        bad=bytearray(saved);struct.pack_into('<d',bad,192+8*(head[2]+head[5]),float('nan'))
+        last.write_bytes(bad)
+        assert 'Nonfinite' in call(binary/'rvr','project',control,30,2,ok=False)
+        last.write_bytes(saved[:-1])
+        assert 'byte count mismatch' in call(binary/'rvr','combine',control,ok=False)
+        assert cache.is_file() and all(p.is_file() for p in rows)
+        assert not (project/'B_general').exists() and (project/'B_general.partial').exists()
+        last.write_bytes(saved)
+        # Merging only needs cache metadata and means, never the full grid payload.
+        cache_bytes=cache.read_bytes();bad=bytearray(cache_bytes)
+        grid_head=struct.unpack_from('<8i',bad,16)
+        struct.pack_into('<d',bad,112+8*grid_head[3],float('nan'));cache.write_bytes(bad)
+        assert 'Nonfinite spatial cache' in call(binary/'rvr','prepare',control,ok=False)
+        call(binary/'rvr','combine',control,'--keep-intermediates')
+        assert not (project/'B_general.partial').exists()
         reference=digest(project/'B_general')
-        assert (project/'spatial_fields').is_file() and all(p.is_file() for p in rows)
-        (project/'B_general').unlink();(project/'unrelated.txt').write_text('preserve this file')
-        call(binary/'combine',control)
+        assert cache.is_file() and all(p.is_file() for p in rows)
+        if reference_binary is not None:
+            baseline=r/'baseline';baseline.mkdir();old_control=r/'baseline.nml'
+            old_control.write_text(control.read_text().replace(str(project),str(baseline)))
+            call(reference_binary/'cal_RVR_split',old_control,0)
+            for i in range(1,31):call(reference_binary/'cal_RVR_split',old_control,i)
+            call(reference_binary/'combine',old_control)
+            assert digest(baseline/'B_general')==reference
+        # Resume after publication and an interrupted cleanup, with the cache already gone.
+        cache.unlink();rows[0].unlink();(project/'unrelated.txt').write_text('preserve this file')
+        stamp=(project/'B_general').stat().st_mtime_ns
+        call(binary/'rvr','combine',control)
         assert digest(project/'B_general')==reference
         assert {p.name for p in project.iterdir()}=={'B_general','unrelated.txt'}
+        for command in ('prepare','project','combine'):
+            assert 'B_GENERAL_REUSED' in call(binary/'rvr',command,control)
+        assert (project/'B_general').stat().st_mtime_ns==stamp and not cache.exists()
+        published=(project/'B_general').read_bytes()
+        bad=bytearray(published);bad[48:112]=b'x'*64;(project/'B_general').write_bytes(bad)
+        assert 'provenance mismatch' in call(binary/'rvr','combine',control,ok=False)
+        assert (project/'B_general').read_bytes()==bad
+        (project/'B_general').write_bytes(published)
         h0=rng.normal(size=(30,30))+1j*rng.normal(size=(30,30));h0=(h0+h0.conj().T)/20
         pr=(rng.normal(size=(5,30))+1j*rng.normal(size=(5,30)))/15
         background(r/'pure.au',h0,pr)
@@ -211,6 +257,8 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False):
             real_and_derivative_components=len(errors),maximum_matrix_error_eV=max(errors),
             full_complex_N=True,scalar_mean_same_basis=True,periodic_z_phases=True,
             wrong_model_rejected=True,compact_rvr_matches_debug=True,failed_combine_retains_intermediates=True,
+            interrupted_stages_resumed=True,completed_outputs_not_rewritten=True,merge_skips_grid_payload=True,
+            pre_change_rvr_byte_identical=reference_binary is not None,
             scope='synthetic full native chain versus direct periodic real-grid integration',
             actual_material_Hamiltonian_validation=False)
         if batch_checks:
@@ -222,5 +270,6 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--binary',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--reference-binary',type=Path)
     args=p.parse_args();args.output.mkdir(parents=True,exist_ok=True)
-    print(json.dumps(run(args.binary,args.output,batch_checks=True),indent=2))
+    print(json.dumps(run(args.binary,args.output,batch_checks=True,reference_binary=args.reference_binary),indent=2))

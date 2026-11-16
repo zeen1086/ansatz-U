@@ -19,7 +19,7 @@ LaNiO₂ 的 Fortran 势拟合、Wannier/RVR、Hamiltonian、能带和转矩工�
 ```text
 local_vfunc.py export / export-background
   → prepare-projection
-  → local/cal_RVR_split → local/combine → B_general
+  → local/rvr prepare/project/combine → B_general
   → local_vfunc.py cal_Hsk → local/cal_Hsk
   → 7_spin/production 批量能量、转矩和 J12 读出
 ```
@@ -32,7 +32,7 @@ make local-rvr BUILD=/absolute/external/build
 
 `local_vfunc.py export` 的 `--code` 可指向本仓库 `4_potential/local/`。模型参数、Wannier、RVR 和计算输出均使用外部路径。背景由 `export-background` 生成纯 H0，当前组装为 `H0 + Hv + HB + HU`；`.au` 保持已有二进制布局，旧 KB/N0 占位字段只校验，不参与当前计算。
 
-新计算默认保留必要结果：RVR 合并成功后清除缓存/分片；单构型 `local_vfunc.py cal_Hsk` 完成后保留矩阵和汇总 JSON。调试时在对应命令添加 `--keep-intermediates`。生产续算需要的系数和检查点继续保留，具体规则见 [local 接口](6_RVR/README.md)。
+新计算默认保留必要结果：RVR 使用统一的 `local/rvr prepare/project/combine` 命令，支持校验并补算缺失分片，合并成功后清除缓存/分片；单构型 `local_vfunc.py cal_Hsk` 完成后保留矩阵和汇总 JSON。调试时在对应命令添加 `--keep-intermediates`。生产续算需要的系数和检查点继续保留，具体规则见 [local 接口](6_RVR/README.md)。
 
 [7_spin/production](7_spin/production/README.md)提供同 kz 批量组装、RVR 伴随收缩、节点本地切片，以及冻结补空间密度下的完整能量/转矩/J12。使用 [外部 JSON 配置模板](examples/7_spin/production.json)。完整能量读出与带自由能读出有不同定义；实现回归通过不等于独立 DFT 物理验证。
 

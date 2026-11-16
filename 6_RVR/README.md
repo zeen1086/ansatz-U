@@ -1,25 +1,23 @@
 # 当前 V1 的可复用 RVR
 
-本目录只保留第30轮冻结 V1 所需的空间核投影与背景支持。五个源码集中在本目录，操作与输出说明统一如下。
+本目录只保留第30轮冻结 V1 所需的空间核投影与背景支持。四个源码集中在本目录，操作与输出说明统一如下。
 
 ```text
 6_RVR/
 ├── README.md
 ├── local_vfunc.f90
 ├── local_rvr.f90
-├── cal_RVR_split.f90
-├── combine.f90
+├── rvr.f90
 └── frozen_io.f90
 ```
 
-`cal_RVR_split.f90` 和 `combine.f90` 是可执行程序入口；其余三个文件是被调用的模块。源码统一到此目录后，Makefile 的可执行文件仍输出到外部构建目录的 `local/`，已有生产命令继续使用原二进制路径。
+`rvr.f90` 是统一命令入口，提供 `prepare/project/combine`；其余三个文件是模块。Makefile 输出 `local/rvr` 和下游 `local/cal_Hsk`。旧 `local/cal_RVR_split`、`local/combine` 命令已移除，作业脚本须采用下文的新命令。
 
 | 文件 | 作用与直接依赖 |
 |---|---|
 | `local_vfunc.f90` | 读取局域空间核和几何，插值并作周期求和；依赖 `common/numerics.f90`、`4_potential/fit/joint_npy.f90` |
 | `local_rvr.f90` | Wannier 投影、重叠矩阵、分片校验与合并、RVR 块读取；依赖 `local_vfunc` |
-| `cal_RVR_split.f90` | 生成空间场或指定轨道/kz 的投影行；依赖 `local_rvr` |
-| `combine.f90` | 合并全部投影行；依赖 `local_rvr` |
+| `rvr.f90` | 统一准备、投影和合并命令，支持补齐缺失分片；依赖 `local_rvr` |
 | `frozen_io.f90` | 读取纯 H0/projector `.au`，执行 Bloch 插值、超胞背景和站点 projector 组装；依赖 `numerics`，由 `7_spin/local/cal_Hsk.f90` 调用 |
 
 上游 `local_vfunc.py` 负责模型导出、纯 H0 导出、投影准备和冻结 V1 反馈求值。下游 `7_spin/local/cal_Hsk.f90` 读取 `local_rvr` 与 `frozen_io`，组装 H0/v/B/HU；`7_spin/production` 在该原生入口上计算批量能量与转矩。`joint_npy` 只是共用的 NPY 读取器，保留它不表示仍有 `joint` RVR 依赖。
@@ -30,15 +28,15 @@
 make local-rvr BUILD=/absolute/external/build
 ```
 
-输出为 `local/cal_RVR_split`、`local/combine`、`local/cal_Hsk`。三个程序为串行/BLAS 程序，投影按轨道/kz 从外部调度并行，不使用 `mpirun` 启动多份写同一分片的进程。Python 构建入口 `build.py` 同样只链接当前模块。
+输出为 `local/rvr`、`local/cal_Hsk`。两个程序为串行/BLAS 程序，投影按轨道/kz 从外部调度并行，不使用 `mpirun` 启动多份写同一分片的进程。Python 构建入口 `build.py` 同样只链接当前模块。
 
-新计算默认精简输出：合并成功并检查最终文件后，`combine` 清除空间场缓存及轨道/kz 分片；`local_vfunc.py cal_Hsk` 校验全部结果后只保留矩阵和 `HAMILTONIAN.json`。两者添加 `--keep-intermediates` 可保留调试文件。失败时不清理；独立 `evaluate` 的系数和生产续算检查点仍保留。详细规则见下文。
+新计算默认精简输出：合并成功并检查最终文件后，`rvr combine` 清除空间场缓存及轨道/kz 分片；`local_vfunc.py cal_Hsk` 校验全部结果后只保留矩阵和 `HAMILTONIAN.json`。两者添加 `--keep-intermediates` 可保留调试文件。失败时不清理；独立 `evaluate` 的系数和生产续算检查点仍保留。详细规则见下文。
 
 `LANIO2_LOCAL_VFUNC_V2`、`LANIO2_LRVR_V2` 和纯 H0 的 `LANIO2_AU_V1` 布局未变。背景读取器保留旧 KB/N0 槽位的长度、有限值和 Hermiticity 校验，读取后丢弃；当前 B 来自 V1 RVR，N 来自完整反馈模型。`background_projectors`、`project_at` 从旧 `local_ansatz` 原样迁入，周期相位、Ni/轨道/自旋顺序不变。
 
 ## 执行流程与文件
 
-不同 L×L×1 超胞共用同一份 `B_general`、冻结 V1 模型包和 `pure_H0.au`；各自重新计算系数、完整 N 和 H。RVR 投影中断后可手动补算缺失分片，但没有自动补算调度器；单构型 `cal_Hsk` 保留失败现场，已有输出目录不能直接覆盖重跑。生产批量驱动另有检查点复用。只有相应阶段成功并完成校验后才清理其临时输出。
+不同 L×L×1 超胞共用同一份 `B_general`、冻结 V1 模型包和 `pure_H0.au`；各自重新计算系数、完整 N 和 H。RVR 投影中断后可重跑相同命令，或用 `rvr project projection.nml` 顺序补齐全部缺失分片；单构型 `cal_Hsk` 保留失败现场，已有输出目录不能直接覆盖重跑。生产批量驱动另有检查点复用。只有相应阶段成功并完成校验后才清理其临时输出。
 
 当前本机正式模型入口：
 
@@ -62,7 +60,7 @@ make local-rvr BUILD=/absolute/external/build
 "$ANSATZ_PYTHON" local_vfunc.py verify /absolute/export/V_func_tmp
 ```
 
-标量常数来自当前V1已约定的Néel规范 `−0.528295173387505 Ry`，固定用于所有纹理。导出几何为原始四Ni结构；`structure.npz` 包含 `cell, positions, species, ni, spins`，Å单位、原子序数、零基Ni索引与单位方向。导出、预测与原生程序均拒绝覆盖已有输出。
+标量常数来自当前V1已约定的Néel规范 `−0.528295173387505 Ry`，固定用于所有纹理。导出几何为原始四Ni结构；`structure.npz` 包含 `cell, positions, species, ni, spins`，Å单位、原子序数、零基Ni索引与单位方向。导出和预测拒绝覆盖已有输出；RVR 程序会校验并复用已完成文件，未完成的 `.partial` 在重试时重新生成。
 
 macOS默认gfortran/Accelerate。25_li的Intel编译示例：
 
@@ -97,18 +95,38 @@ Wannier输入沿用原始 `wan_1 ... wan_30`：little-endian complex128流文件
 
 `grid-weight=1`适用于既有离散归一化来源；其他基底需使用其实际积分权重。准备器校验字节数、记录模型/Wannier/背景身份，并估算投影文件大小；不执行投影。`PROJECTION.json`与`projection.nml`一起保留。来源绑定防止误混文件；共同gauge的物理来源仍需由实际数据生产记录核验。
 
-## 3. 原生 cal_RVR_split 和 combine
+## 3. 统一 RVR 命令与中断续算
 
 ```sh
-/absolute/build/local/cal_RVR_split /absolute/RVR/projection.nml 0
-/absolute/build/local/cal_RVR_split /absolute/RVR/projection.nml 1
-# 对空间轨道2..30执行同一命令；可按轨道行并行。
-/absolute/build/local/combine /absolute/RVR/projection.nml
+/absolute/build/local/rvr prepare /absolute/RVR/projection.nml
+/absolute/build/local/rvr project /absolute/RVR/projection.nml
+/absolute/build/local/rvr combine /absolute/RVR/projection.nml
 ```
 
-行0直接读取 `V_func_tmp` 的局域空间核，只做一次三线性插值、紧支撑窗口与z周期求和，写共享 `spatial_fields`。行1..30读取缓存与共同Wannier，执行Fortran/BLAS投影；第三个可选参数指定一个1基kz索引，支持按轨道/kz分片。合并器要求所有分片完整且模型、基底、平移和权重一致，输出 `B_general`。
+`prepare` 读取局域空间核，做三线性插值、紧支撑窗口与 z 周期求和，生成共享 `spatial_fields`。`project` 读取空间场和 Wannier，执行 Fortran/BLAS 投影；不指定轨道时按顺序检查全部轨道/kz，只补算缺失分片。也可指定任务以便外部并行调度：
 
-默认精简输出：`combine` 完整写出并读回检查 `B_general` 的格式/字节数后，删除此次合并使用的 `spatial_fields` 和全部 `B_general_i_kzk` 分片。由 `prepare-projection` 创建的目录最终只保留以下四个文件：
+```sh
+# 第 1 个轨道的全部 kz
+/absolute/build/local/rvr project /absolute/RVR/projection.nml 1
+# 第 1 个轨道、第 3 个 kz（均为 1 基编号）
+/absolute/build/local/rvr project /absolute/RVR/projection.nml 1 3
+# 保留分片以便调试或重新合并
+/absolute/build/local/rvr combine /absolute/RVR/projection.nml --keep-intermediates
+```
+
+每个缓存、分片或最终文件只允许一个写入进程；可并行投影不同轨道/kz，所有投影进程结束后才执行合并。不要让全量 `project` 与覆盖相同分片的任务同时运行。
+
+恢复规则：
+
+- `spatial_fields`、`B_general_i_kzk` 和 `B_general` 都先写入同目录的 `.partial`；关闭成功并通过对应格式/长度检查后再重命名发布。生成的空间场和分片包含有限值校验。
+- 重新执行 `prepare` 会校验并复用完整缓存。`project` 校验正式分片的模型/基底、轨道/kz、平移、权重、长度及全部数据有限性，合格文件不重写。没有正式文件时重新计算，并替换该任务遗留的 `.partial`。
+- 正式文件若截断、身份不符或含非有限值，程序报错并保留文件；先将异常文件归档到其他位置，再重新运行。旧版遗留的不完整正式文件也按此处理，不会被当成成功检查点。
+- `combine` 只读取空间缓存头、空间域及末尾的标量核均值，跳过整个网格场，不分配完整 `fields(ng,nc,nd)`。分片逐块读取、验证和写入，未完成的合并从头重建 `.partial`，不重做已完成投影。
+- 最终 `B_general` 已存在时，三个命令都会核验其模型/基底、几何、尺寸、kz 和完整数据有限性，再复用。若发布后清理被中断，重跑 `combine` 可继续清理，不依赖已删除的空间缓存。
+
+复用期间须保持模型、Wannier、平移/权重及准备记录不变；变更输入应重新执行 `prepare-projection`，生成新的来源绑定和输出目录。检查过程需要读取数据，不是只检查文件名，也不是物理精度验收。
+
+默认精简输出：最终 `B_general` 发布成功后，`combine` 清除该任务的空间缓存、分片及遗留 `.partial`，目录中的其他文件不受影响。由 `prepare-projection` 创建的目录最终保留：
 
 ```text
 B_general          # 可复用矩阵元
@@ -117,7 +135,7 @@ projection.nml     # 投影输入，便于追溯和重建
 kz.dat             # 投影 kz 列表
 ```
 
-30 个轨道、8 个 kz 时，正常完成后的文件数由 245 个降到 4 个。调试或需要重新合并时用 `combine projection.nml --keep-intermediates` 保留缓存和全部分片。验证失败时不清理中间文件；失败的 `B_general` 可能不完整，不能以文件存在代替成功退出。`PROJECTION.json` 仍是准备记录，不充当合并完成标记。清理只针对本次合并输入，目录中的其他文件不受影响。
+30 个轨道、8 个 kz 时，完成后的文件数仍为 4 个。`--keep-intermediates` 保留调试文件；计算或校验失败时不进入清理。`PROJECTION.json` 仍是准备记录，成功合并输出 `B_GENERAL_COMPLETE`。完成后的文件布局和数值数据格式与之前兼容。
 
 投影结果保存所有 scalar62+bias1、B62空间通道。z方向周期固定为1，按显式kz投影；x/y保持真实原胞平移，所以同一个B_general可用于不同L与自旋纹理。新kz要补投影；不对未投影kz默默插值。
 
@@ -189,3 +207,5 @@ H0、v、B、HU各计一次；导数模式不加入H0、偏置常数或I/2项。
 小型测试覆盖实现一致性，不代替完整材料投影、HPC 生产运行或独立 DFT 物理验证。本次未重新运行生产计算。
 
 同日默认输出精简回归：离线测试 24 项通过、1 项 MPI 跳过；原生合并的精简/调试结果 SHA256 一致，截断分片导致失败时全部中间文件保留；真实 V1 的 15 个 H/dH 分量在两种模式下逐字节一致，索引完整归入 JSON。原生进程失败或后续导数矩阵截断时，已成功的前序结果与所有预测输入均保留。生产批量检查点测试继续通过。
+
+同日统一入口与续算验证：`rvr prepare/project/combine` 覆盖遗留 `.partial` 重算、缺失分片补齐、正式分片不重写、错误身份/截断/非有限值拒绝，以及最终发布后中断清理的恢复。合并在已投影的测试缓存网格区注入 NaN 后仍得到相同结果，证明该阶段只依赖元数据和均值；`prepare` 则拒绝该损坏缓存。与改动前原生程序独立投影得到的 `B_general` SHA256 一致；120 个 H/dH 分量及 40 个批量/单点对照通过。该测试模拟中断留下的文件状态，未进行集群断电或文件系统故障试验。
