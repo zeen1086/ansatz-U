@@ -16,7 +16,7 @@ from fortran_io import write_record, read_array
 class WannierPipelineTests(unittest.TestCase):
     @unittest.skipUnless((shutil.which("mpifort") or shutil.which("mpiifort")) and shutil.which("mpirun"),
                          "MPI compiler and mpirun are unavailable")
-    def test_mpi_wannier_normalization_and_band(self):
+    def test_mpi_wannier_normalization(self):
         compiler=shutil.which("mpiifort") or shutil.which("mpifort")
         flags=(["-O0","-check","bounds","-mkl"] if "mpiifort" in compiler else
                ["-O0","-fcheck=all","-ffree-line-length-none","-fallow-argument-mismatch"])
@@ -53,23 +53,6 @@ class WannierPipelineTests(unittest.TestCase):
             converted=np.fromfile(wan/'make_wan/converted/wan_data/wan_1',dtype='<c16').reshape((1,2,1),order='F')
             np.testing.assert_allclose(converted,a[:,[1,0],:],atol=1e-14,rtol=0)
             self.assertAlmostEqual(float(np.sum(abs(a)**2)),1.0,places=13)
-            # Check the real band entry point with one and two MPI ranks.
-            (w/'super').mkdir();(w/'tot_HR').mkdir()
-            (w/'super/ir_vec_HYC').write_text(f'{0:8d}{0:8d}{0:8d}\n')
-            p.update(period_x=1,period_y=1,period_z=1,nx=1,ny=1,nz=1,super_h_dir=str(w/'super'))
-            (w/'parameter_mod.f90').write_text(fortran_module(p))
-            h=np.array([[1,.2j],[-.2j,2]],dtype='<c16');(w/'tot_HR/hr_1').write_bytes(h.tobytes(order='F'))
-            path='! Generated fixture\ntoy\nnline=  1\nnpt=  2\n'+''.join(f'{x:12.6f}' for x in [0,0,0,.5,0,0])+'\n'
-            (w/'plt_path.in').write_text(path)
-            subprocess.run([compiler]+flags+[str(w/'parameter_mod.f90'),str(r/'7_spin/band.f90'),'-o',str(w/'band')]
-                           +([] if 'mpiifort' in compiler else shlex.split(os.environ.get('LIBS', DEFAULT_LIBS))),cwd=w,check=True)
-            previous=None
-            for ranks in (1,2):
-                subprocess.run(['mpirun','-np',str(ranks),str(w/'band')],cwd=w,env=env,check=True,timeout=30)
-                data=np.loadtxt(w/'plt_bnd_toy')
-                np.testing.assert_allclose(data[:,5],np.repeat(np.linalg.eigvalsh(h),2),atol=5.1e-7,rtol=0)
-                if previous is not None:self.assertEqual(previous,(w/'plt_bnd_toy').read_bytes())
-                previous=(w/'plt_bnd_toy').read_bytes();(w/'plt_bnd_toy').unlink()
 
 
 if __name__=='__main__':unittest.main(verbosity=2)

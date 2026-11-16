@@ -68,19 +68,6 @@ F = Fband − Σk wk Tr[P(H−H0)]
 
 完整能量采用 Wannier 重叠度量；带自由能入口直接对角化 H，要求输入基底正交归一。非正交插值点不能仅凭相同展宽参数将两种入口的带项直接等同。
 
-## 独立能带工具
-
-`band.f90` 读取已有 `tot_HR/hr_*` 和平移表，仍用于 Wannier 流程检查，不读取 V1 的逐 k `.h` 文件。使用匹配的 `parameter`（TOML）、`plt_path.in` 和已有 MPI 环境：
-
-```sh
-ANSATZ_BUILD_DIR=/absolute/band-build /absolute/python build.py \
-  7_spin/band.f90 --fc mpifort
-cd /absolute/band_run
-mpirun -np 2 /absolute/band-build/bin/7_spin/band.x
-```
-
-在运行目录准备 `tot_HR/` 和 `plt_path.in`，后者可按本目录模板填写；平移表位置由 `super_h_dir` 指定。输出 `plt_bnd_<title>`。
-
 ## 输入与构建
 
 使用已有 Python 3.11+、NumPy、SciPy 环境。原生局域程序需要 Fortran 与 BLAS/LAPACK。
@@ -205,3 +192,21 @@ QE `make.inc` 和静态库，不能与其他版本的模块文件混编。
 不要直接复用损坏目录。更换输入、模型、网格或步长时使用新输出目录。
 
 未设置 `spin_work` 的旧配置沿用 `work` 保存构型输出；未设置 `complete_energy.shared_work` 时沿用完整能量的 `work`。已有任务可保留旧配置续算；新任务使用模板中的分离路径。
+
+## 小型检查与原生回归
+
+```sh
+/absolute/python 7_spin/complete_readout.py
+/absolute/python -B check.py
+```
+
+`complete_readout.py` 包含能量、Hubbard 项和固定电子数响应的有限差分检查；
+`density_map.py` 保留独立参考投影算法，由完整能量初始化及离线测试调用。
+在配置好参考密度、QE 适配器并分配 PBS 计算任务后，可运行原生铺展密度检查：
+
+```sh
+/absolute/python 7_spin/check_large_native.py
+```
+
+结果写入 `complete_energy.shared_work/native_check/`，目录须不存在。
+这些检查不替代材料收敛和独立 DFT 精度验证。

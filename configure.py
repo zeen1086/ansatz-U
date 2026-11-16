@@ -23,7 +23,7 @@ def render(values: dict) -> dict[Path, str]:
     a = p["a0"] * 0.529177210903
     p["unit_cell"] = f"{a:.12f} 0 0\n0 {a:.12f} 0\n0 0 {a*p['celldm3']:.12f}"
     outputs = {ROOT / ".build/parameter_mod.f90": fortran_module(values)}
-    for stage in ("1_scf", "2_band", "3_band_no_mag", "5_wannier", "7_spin"):
+    for stage in ("1_scf", "2_band", "3_band_no_mag", "5_wannier"):
         for source in (ROOT / stage).glob("*.template"):
             target = source.with_suffix("")
             if target.suffix == ".win":

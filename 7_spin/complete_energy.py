@@ -60,7 +60,7 @@ def reference(z,slab,dv):
             fields=np.load(MIN/'results/FIELDS.npz')['DFT'][0];nin=np.load(MIN/'results/FIELDS.npz')['NDFT'][0][[0,2,1,3]]
             h0,aa=operators(2,k,*static(OLD/'basis/pure_H0.au'));_,vu=hubbard(nin)
             reconstructed=h0+fold_project(psi,grid_to_cells(fields,2),2)+sum(aa[j].conj().T@vu[j]@aa[j] for j in range(4))
-            from reference_projection import Projection,indices,spin_matrix
+            from density_map import Projection,indices,spin_matrix
             old=Projection.__new__(Projection);old.ix=indices(data['grid']);old.bits=bits;old.block=30;old.w=np.load(REF/f'wr_{ki+1:04}.npy',mmap_mode='r')
             direct=spin_matrix(old.general(fields.T))[np.ix_(ix,ix)]
             local=fold_project(psi,grid_to_cells(fields,2),2)

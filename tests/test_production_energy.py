@@ -14,10 +14,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'7_spin'))
 import complete_readout
 import density_map
-import energy_torque
 import kz_production
 import native_input
-import reference_projection
 import summarize_energy
 
 
@@ -69,7 +67,7 @@ class ProductionEnergyTest(unittest.TestCase):
                     output/'J/L04/mesh2_h0.001/case_01', energy_shared, spins/'complete/L04/case_01'])))
 
     def test_complete_functional_and_fixed_electron_response(self):
-        energy_torque.selfcheck()
+        complete_readout.energy_selfcheck()
         complete_readout.selfcheck()
         complete_readout.full_functional_selfcheck()
         summarize_energy.selfcheck()
@@ -100,11 +98,11 @@ class ProductionEnergyTest(unittest.TestCase):
         n[0, 1, 0] = -.02j
         vu = np.eye(10)[None]*.17
         bare = -4.
-        band = bare+energy_torque.integral(rho, v, 1.)+energy_torque.trace(n, vu)
+        band = bare+complete_readout.integral(rho, v, 1.)+complete_readout.trace(n, vu)
         free = band-.07
         qe = np.array([.2, -.3, -.01, 41., 99., 88., -.4, .13])
         ry = complete_readout.RY
-        expected, _ = energy_torque.energy(free, 0., rho, v, n, vu,
+        expected, _ = complete_readout.energy(free, 0., rho, v, n, vu,
             qe[0]*ry, qe[1]*ry, qe[2]*ry, qe[6]*ry, 1.)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -135,13 +133,13 @@ class ProductionEnergyTest(unittest.TestCase):
     def test_reference_projection_against_direct_grid(self):
         rng = np.random.default_rng(1620)
         grid = [4, 4, 2]
-        p = reference_projection.Projection.__new__(reference_projection.Projection)
-        p.ix = reference_projection.indices(grid)
-        p.bits = reference_projection.BITS[[0, 2, 1, 3]]
+        p = density_map.Projection.__new__(density_map.Projection)
+        p.ix = density_map.indices(grid)
+        p.bits = density_map.BITS[[0, 2, 1, 3]]
         p.block = 3
         p.w = rng.normal(size=(8, 12))+1j*rng.normal(size=(8, 12))
         full = np.empty((32, 12), complex)
-        for cell, ix in zip(reference_projection.BITS, p.ix):
+        for cell, ix in zip(density_map.BITS, p.ix):
             full[ix] = p.w*np.repeat((-1.)**(p.bits@cell), 3)
         fields = rng.normal(size=(4, 32))
         direct = np.array([full.conj().T@(f[:, None]*full) for f in fields])
