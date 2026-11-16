@@ -1,0 +1,8 @@
+SOURCE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+include ../../make.inc
+MODFLAGS = $(BASEMOD_FLAGS) $(MOD_FLAG)../../PW/src $(MOD_FLAG)../../Modules $(MOD_FLAG)../../dft-d3
+G1_LIBS = libpp.a ../../PW/src/libpw.a ../../KS_Solvers/libks_solvers.a ../../dft-d3/libdftd3qe.a $(BASEMODS)
+.PHONY: native
+native:
+	$(MPIF90) $(F90FLAGS) -heap-arrays -check bounds -c $(SOURCE_DIR)/native_large.f90 -o $(TASK_DIR)/native_large.o
+	$(LD) $(LDFLAGS) -o $(TASK_DIR)/native_large.x $(TASK_DIR)/native_large.o $(G1_LIBS) $(QELIBS)

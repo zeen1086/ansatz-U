@@ -1,0 +1,308 @@
+"""Reviewed native H, common-mu HF torque and shell-J execution; no scheduler calls."""
+import argparse
+import csv
+import json
+import os
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
+import numpy as np
+from scipy.special import erfc
+from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, PYTHON, SIGMA, SOURCE
+from common import compute_node, run, save, load_h, chemical_potential, require_regression,require_calculation
+from torque_contract import derivative,contract_batch
+
+
+def binding() -> None:
+    sys.path.insert(0,str(SOURCE))
+    from local_vfunc import metadata, digest
+    meta=metadata(INTERFACE/'V_func_tmp')
+    basis=json.loads((WORK/'RVR/PROJECTION.json').read_text())
+    if (meta['model_id']!=CONFIG['model_id'] or basis['model_id']!=meta['model_id']
+            or basis['background_sha256']!=digest(WORK/'basis/pure_H0.au')):
+        raise ValueError('Model/background provenance changed')
+    with (WORK/'RVR/B_general').open('rb') as f: head=f.read(176)
+    if head[:16]!=b'LANIO2_LRVR_V2  ' or head[48:112].decode()!=meta['model_id'] or head[112:176].decode()!=basis['basis_id']:
+        raise ValueError('RVR identity mismatch')
+
+
+def run_native(coeff: Path, k: np.ndarray, out: Path, components: bool, *, rvr: Path | None=None) -> float:
+    packed=np.column_stack((k[:,:3],np.full(len(k),1/len(k))))
+    np.savetxt(out/'k.dat',packed,header=str(len(k)),comments='',fmt='%.17g')
+    values=dict(rvr_path=rvr or WORK/'RVR/B_general',background_path=WORK/'basis/pure_H0.au',
+                coefficient_path=coeff,kpoints_path=out/'k.dat',output_prefix=out/'H')
+    lines=['&local_hamiltonian']
+    lines += [f" {key}='{str(value.resolve()).replace(chr(39),chr(39)*2)}'," for key,value in values.items()]
+    lines += [" background_kind='pure_H0_no_local_fields_no_HU',",
+              f" dump_components={'.true.' if components else '.false.'}",'/']
+    (out/'run.nml').write_text('\n'.join(lines)+'\n');start=time.monotonic()
+    env=os.environ.copy()
+    workers=int(env.get('V1_K_WORKERS','1'))
+    if len(k)>1 and workers>1:
+        env.update(OMP_NUM_THREADS=str(workers),MKL_NUM_THREADS=str(workers))
+    subprocess.run([BUILD/'local/cal_Hsk',out/'run.nml'],env=env,check=True)
+    return time.monotonic()-start
+
+
+def native(coeff: Path, k: np.ndarray, out: Path, components: bool=False) -> Path:
+    out.mkdir(parents=True,exist_ok=True);result=out/'H.k000001.h'
+    if (out/'COMPLETE.json').exists(): return result
+    if (out/'H.index').exists(): raise RuntimeError(f'Incomplete native task requires inspection: {out}')
+    seconds=run_native(coeff,k[None],out,components)
+    if not result.exists(): raise RuntimeError('Native calculation did not produce H')
+    save(out/'COMPLETE.json',dict(seconds=seconds))
+    return result
+
+
+def native_batch(coeff: Path, k: np.ndarray, directories: list[Path], base: Path,
+                 dimension: int, components: bool=False, *, rvr: Path | None=None) -> None:
+    """Assemble one kz group and publish legacy per-point checkpoints atomically."""
+    if len(k)!=len(directories) or not 1<=len(k)<=16 or np.ptp(k[:,2])>1e-10:
+        raise ValueError('Expected one kz group of up to 16 points and matching output paths')
+    missing=[]
+    suffixes=['h','h0','hv','hb','hu'] if components else ['h']
+    expected=16*dimension**2
+    basis=json.loads((WORK/'RVR/PROJECTION.json').read_text())['basis_id']
+    ids=[CONFIG['model_id'],basis]
+    for index,out in enumerate(directories):
+        if (out/'COMPLETE.json').is_file():
+            metadata=(out/'H.index').read_text().splitlines()
+            recorded=np.array(metadata[4].split()[1:4],float)
+            if ([s.strip() for s in metadata[2:4]]!=ids or
+                    not np.allclose(recorded,k[index,:3],rtol=0,atol=1e-12)):
+                raise ValueError(f'Completed checkpoint has different model, basis or k point: {out}')
+            for suffix in suffixes:
+                if (out/f'H.k000001.{suffix}').stat().st_size!=expected:
+                    raise ValueError(f'Invalid completed Hamiltonian checkpoint: {out}')
+        elif out.exists():
+            raise RuntimeError(f'Archive the incomplete native task before resuming: {out}')
+        else:
+            missing.append(index)
+    if not missing:
+        return
+    with tempfile.TemporaryDirectory(prefix='.cal_Hsk_batch_',dir=base) as tmp:
+        staged=Path(tmp)
+        if rvr is None:
+            seconds=run_native(coeff,k[missing],staged,components)
+        else:
+            seconds=run_native(coeff,k[missing],staged,components,rvr=rvr)
+        metadata=(staged/'H.index').read_text().splitlines()
+        if len(metadata)!=4+len(missing) or [s.strip() for s in metadata[2:4]]!=ids:
+            raise ValueError('Incomplete cal_Hsk batch index')
+        for slot,index in enumerate(missing,1):
+            row=metadata[3+slot].split()
+            if int(row[0])!=slot or not np.allclose(np.array(row[1:4],float),k[index,:3],rtol=0,atol=1e-12):
+                raise ValueError('cal_Hsk batch point order changed')
+            point=staged/f'point_{slot}';point.mkdir()
+            for suffix in suffixes:
+                part=staged/f'H.k{slot:06}.{suffix}'
+                if part.stat().st_size!=expected:
+                    raise ValueError(f'Truncated cal_Hsk batch output: {part}')
+                part.rename(point/f'H.k000001.{suffix}')
+            head=metadata[1].split();head[2]='1';row[0]='1';row[4]='1.0'
+            (point/'H.index').write_text('\n'.join([metadata[0],' '.join(head),*metadata[2:4],' '.join(row)])+'\n')
+            np.savetxt(point/'k.dat',np.r_[k[index,:3],1.][None],header='1',comments='',fmt='%.17g')
+            save(point/'COMPLETE.json',dict(seconds=seconds/len(missing),batch_seconds=seconds,batch_size=len(missing)))
+        for slot,index in enumerate(missing,1):
+            out=directories[index];out.parent.mkdir(parents=True,exist_ok=True)
+            (staged/f'point_{slot}').rename(out)
+
+
+def kz_groups(k: np.ndarray):
+    for kz in np.unique(k[:,2]):
+        members=np.flatnonzero(k[:,2]==kz)
+        for start in range(0,len(members),16):
+            yield members[start:start+16]
+
+
+def coefficients(structure: Path, directory: Path, sites: list[int], step: float) -> None:
+    if (directory/'PREDICTION.json').exists(): return
+    run(PYTHON,SOURCE/'local_vfunc.py','evaluate','--model',INTERFACE/'V_func_tmp',
+        '--structure',structure,'--output',directory,'--derivative-sites',*sites,'--step',step)
+
+
+def regression_assemble() -> None:
+    binding();data=np.load(REF/'data.npz'); base=dict(np.load(ROOT/'inputs/L02/structure.npz'))
+    k=data['K'];out=WORK/'regression';out.mkdir(parents=True,exist_ok=True)
+    for name in ('Neel_anchor','fm'):
+        row=out/name;row.mkdir(exist_ok=True)
+        base['spins']=data['u'][data['names'].tolist().index(name)][[0,2,1,3]]
+        np.savez(row/'structure.npz',**base)
+        coefficients(row/'structure.npz',row/'coeff',[],.001)
+        for group in kz_groups(k):
+            directories=[row/f'k_{ki:04}' for ki in group]
+            native_batch(row/'coeff/value.bin',k[group],directories,row,len(base['spins'])*60,components=True)
+            print('REGRESSION_H_BATCH',name,group.tolist(),flush=True)
+
+
+def case_root(length: int, index: int, mesh: int, step: float):
+    definition=json.loads((ROOT/f'inputs/L{length:02}/CASE.json').read_text())
+    case=definition['angle_configurations'][index]
+    work=WORK/f'J/L{length:02}/mesh{mesh}_h{step:g}/case_{index:02}'
+    return definition,case,work
+
+
+def map_k(k: np.ndarray,worker) -> None:
+    workers=int(os.environ.get('V1_K_WORKERS','1'))
+    if not 1<=workers<=16:raise ValueError('Expected 1..16 allocated k workers')
+    if workers==1:
+        for ki in np.argsort(k[:,2],kind='stable'):worker(int(ki))
+        return
+    # Keep one kz slab hot while independent native processes/NumPy calls use one core each.
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for kz in np.unique(k[:,2]):list(pool.map(worker,map(int,np.flatnonzero(k[:,2]==kz))))
+
+
+def spectra(length: int, index: int, mesh: int, step: float) -> None:
+    require_calculation(length);binding();definition,case,out=case_root(length,index,mesh,step)
+    out.mkdir(parents=True,exist_ok=True);start=time.monotonic()
+    if (out/'SPECTRA.json').exists() and (out/'SPECTRA.npz').exists(): return
+    s=dict(np.load(ROOT/f'inputs/L{length:02}/structure.npz'))
+    site=case['perturb_site_native_1based']; angle=np.deg2rad(case['angle_deg'])
+    if site is not None:
+        v=s['spins'][site-1].copy()
+        s['spins'][site-1]=[np.cos(angle)*v[0]+np.sin(angle)*v[2],v[1],-np.sin(angle)*v[0]+np.cos(angle)*v[2]]
+    np.savez(out/'structure.npz',**s)
+    coefficients(out/'structure.npz',out/'coeff',case['readout_sites_native_1based'],step)
+    k=np.array([[x/mesh,y/mesh,z/8,1/(mesh*mesh*8)] for x in range(mesh) for y in range(mesh) for z in range(8)])
+    energies=[None]*len(k);timing=[0.]*len(k);dimension=definition['dimension']
+    def spectrum_k(ki):
+        target=out/f'k_{ki:04}';tick=time.monotonic()
+        hfile=target/'value/H.k000001.h'
+        if not (target/'eigensystem.npz').exists():
+            h=load_h(hfile,dimension);e,v=np.linalg.eigh(h)
+            temp=target/'eigensystem.partial.npz'
+            np.savez(temp,e=e,v=v);temp.replace(target/'eigensystem.npz');del h,v
+        with np.load(target/'eigensystem.npz') as z: energies[ki]=z['e']
+        timing[ki]=time.monotonic()-tick;print('SPECTRUM',length,index,ki,timing[ki],flush=True)
+    for group in kz_groups(k):
+        directories=[out/f'k_{ki:04}'/'value' for ki in group]
+        native_batch(out/'coeff/value.bin',k[group],directories,out,dimension)
+        map_k(k[group],lambda i:spectrum_k(int(group[i])))
+    energies=np.array(energies);mu=chemical_potential(energies,k[:,3],definition['electrons'])
+    np.savez(out/'SPECTRA.npz',k=k,e=energies,mu=mu)
+    save(out/'SPECTRA.json',dict(status='COMPLETE',L=length,case=case,mesh=[mesh,mesh,8],
+         derivative_step_rad=step,seconds=time.monotonic()-start,k_seconds=timing,mu_eV=mu,
+         electrons=definition['electrons'],model_id=CONFIG['model_id']))
+
+
+def torque(length: int,index: int,mesh: int,step: float) -> None:
+    require_calculation(length);binding();definition,case,out=case_root(length,index,mesh,step)
+    if (out/'TORQUE.json').exists(): return
+    with np.load(out/'SPECTRA.npz') as z: k,e,mu=z['k'],z['e'],float(z['mu'])
+    sites=case['readout_sites_native_1based'];nd=definition['dimension'];start=time.monotonic()
+    derivatives=[derivative(out/f'coeff/dsite_{site:04}.bin') for site in sites]
+    values=[None]*len(k);imaginaries=[0.]*len(k);energies=[0.]*len(k);counts=[0.]*len(k)
+    # The PBS shell capped the old per-point readers. Here only one thread reads RVR.
+    workers=int(os.environ.get('K_WORKERS',os.environ.get('V1_K_WORKERS','1')))
+    for group in kz_groups(k):
+        missing=[int(ki) for ki in group if not (out/f'k_{ki:04}/TORQUE.npz').exists()]
+        if missing:
+            tick=time.monotonic()
+            densities=np.empty((len(missing),nd,nd),dtype=np.complex128)
+            point_stats=[]
+            for slot,ki in enumerate(missing):
+                with np.load(out/f'k_{ki:04}/eigensystem.npz') as z: ev,vec=z['e'],z['v']
+                x=(ev-mu)/SIGMA
+                occ=.5*erfc(x)
+                densities[slot]=(vec*occ)@vec.conj().T
+                point_stats.append(dict(count=occ.sum(),F=np.sum(ev*occ-SIGMA*np.exp(-x*x)/(2*np.sqrt(np.pi)))))
+                del vec
+            ts,im,measure=contract_batch(WORK/'RVR/B_general',WORK/'basis/pure_H0.au',k[missing,:3],
+                                         densities,derivatives,workers=workers)
+            if length==2 and index in (0,1) and 0 in missing:
+                slot=missing.index(0)
+                site=sites[0];directory=out/f'k_0000/dsite_{site:04}'
+                dh=load_h(native(out/f'coeff/dsite_{site:04}.bin',k[0],directory),nd)
+                direct=-np.einsum('ij,ji->',densities[slot],dh);del dh
+                error=float(abs(ts[slot,0]-direct))
+                if error>1e-8:raise ValueError(f'Actual material adjoint/direct derivative mismatch: {error}')
+                save(out/'ADJOINT_MATERIAL_CHECK.json',dict(status='PASS',site=site,k_index=0,error_eV=error))
+            del densities
+            for slot,ki in enumerate(missing):
+                part=out/f'k_{ki:04}/TORQUE.npz'
+                temp=part.with_name('TORQUE.partial.npz')
+                np.savez(temp,torque=ts[slot],imaginary=im[slot],**point_stats[slot])
+                temp.replace(part)
+            print('TORQUE_KZ_BATCH',json.dumps(dict(L=length,case=index,kz=float(k[missing[0],2]),
+                  k_indices=missing,workers=min(workers,len(missing)),seconds=time.monotonic()-tick,**measure)),flush=True)
+        for ki in group:
+            with np.load(out/f'k_{ki:04}/TORQUE.npz') as z:
+                values[ki]=z['torque'];imaginaries[ki]=float(z['imaginary'])
+                counts[ki]=float(z['count']);energies[ki]=float(z['F'])
+            # Remove scratch only after publishing the point's torque.
+            paths=[out/f'k_{ki:04}/dsite_{site:04}/H.k000001.h' for site in sites]
+            if index!=0:
+                paths.extend((out/f'k_{ki:04}/value/H.k000001.h',out/f'k_{ki:04}/eigensystem.npz'))
+            for path in paths:path.unlink(missing_ok=True)
+            print('TORQUE',length,index,ki,flush=True)
+    result=dict(status='COMPLETE',L=length,case=case,sites=sites,
+                torque_eV=(k[:,3]@np.array(values)).tolist(),F_eV=float(k[:,3]@energies),
+                electron_error=float(abs(k[:,3]@counts-definition['electrons'])),
+                imaginary_gradient_eV=max(imaginaries),seconds=time.monotonic()-start,
+                mesh=[mesh,mesh,8],derivative_step_rad=step)
+    if result['electron_error']>1e-8: raise ValueError('Electron count changed')
+    save(out/'TORQUE.json',result)
+
+
+def collect(length: int,mesh: int,step: float) -> None:
+    require_regression();definition,_,out=case_root(length,0,mesh,step);out=out.parent
+    cases=definition['angle_configurations']
+    records=[json.loads((out/f'case_{i:02}/TORQUE.json').read_text()) for i in range(len(cases))]
+    def value(perturb,angle,target):
+        i=next(i for i,c in enumerate(cases) if c['perturb_site_native_1based']==perturb and c['angle_deg']==angle)
+        row=records[i];return row['torque_eV'][row['sites'].index(target)]
+    rows=[]
+    for shell in definition['selected_shells']:
+        representative=min(p['site_native_1based'] for p in shell['pairs'])
+        for pair in shell['pairs']:
+            target=pair['site_native_1based'];sign=pair['neel_sign'];jj=[]
+            for delta in (.25,.5,1.):
+                jj.append(-1000*(value(1,delta,target)-value(1,-delta,target))/(2*np.deg2rad(delta)*sign))
+            small=(4*jj[0]-jj[1])/3;large=(4*jj[1]-jj[2])/3;reverse=None
+            if target==representative:
+                back=[-1000*(value(target,d,1)-value(target,-d,1))/(2*np.deg2rad(d)*sign) for d in (.25,.5)]
+                reverse=(4*back[0]-back[1])/3
+            rows.append(dict(shell=shell['label'],target=target,distance_A=shell['distance_A'],
+                 J_meV=small,step_error_meV=abs(small-large),reverse_J_meV=reverse,
+                 reciprocity_error_meV=None if reverse is None else abs(small-reverse),steps_meV=jj,
+                 image_multiplicity=pair['folded_shell_multiplicity']))
+    shells=[]
+    for shell in definition['selected_shells']:
+        values=[r['J_meV'] for r in rows if r['shell']==shell['label']]
+        shells.append(dict(shell=shell['label'],mean_meV=float(np.mean(values)),spread_meV=float(np.ptp(values))))
+    for name,data in [('J_pairs.csv',rows),('J_shells.csv',shells)]:
+        with (out/name).open('w',newline='') as f:
+            writer=csv.DictWriter(f,fieldnames=list(data[0]));writer.writeheader();writer.writerows(data)
+    prior=None
+    if length==2 and Path(CONFIG['old_J']).exists():
+        old=np.loadtxt(CONFIG['old_J'],delimiter=',',skiprows=1)[:,1:]
+        order=[0,2,1,3]
+        prior=max(abs(row['J_meV']-old[order[row['target']-1],0]) for row in rows)
+    save(out/'RESULT.json',dict(status='COMPLETE',L=length,mesh=[mesh,mesh,8],pairs=rows,shells=shells,
+         stationarity_meV=max(abs(np.array(records[0]['torque_eV'])))*1000,
+         convention='unit spins; E=sum_i<j J_ij e_i dot e_j; positive J AFM',
+         interpretation='periodic sums; no division by image multiplicity',
+         previous_four_Ni_max_difference_meV=prior,
+         previous_four_Ni_same_k_mesh=(mesh==4) if prior is not None else None,
+         k_mesh_converged=False,physical_DFT_accuracy_validated=False))
+
+
+def main() -> None:
+    p=argparse.ArgumentParser();p.add_argument('stage',choices=['regression','spectrum','torque','collect'])
+    p.add_argument('--L',type=int,choices=[2,4,6,8,10]);p.add_argument('--case',type=int,default=0)
+    p.add_argument('--mesh',type=int);p.add_argument('--step',type=float,default=.001)
+    a=p.parse_args();compute_node()
+    if a.stage=='regression': regression_assemble();return
+    if a.L is None or a.step<=0 or not np.isfinite(a.step): raise ValueError('Valid L and inner step required')
+    mesh=a.mesh if a.mesh is not None else (8+a.L-1)//a.L
+    if mesh<1: raise ValueError('Mesh must be positive')
+    if a.stage=='collect': collect(a.L,mesh,a.step)
+    elif a.stage=='spectrum': spectra(a.L,a.case,mesh,a.step)
+    else: torque(a.L,a.case,mesh,a.step)
+
+
+if __name__=='__main__': main()

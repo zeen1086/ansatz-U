@@ -1,0 +1,23 @@
+{
+  "python": "/absolute/existing/python",
+  "input_root": "/absolute/material_inputs",
+  "interface": "/absolute/v1_interface",
+  "native_build": "/absolute/build",
+  "references": "/absolute/common_wannier/references",
+  "work": "/absolute/material_run",
+  "model_id": "c21d4352e9c33e86eeaade75fe3d33f9baddba3a48214a92110679ff2bfdae67",
+  "parameters_sha256": "9353c65c9fa5b04a6e0b297b59e7eca827a3dae81149699f91a2eef09cb6c7c8",
+  "old_J": "/absolute/optional/Jij_periodic_meV.csv",
+  "rvr_slices": {},
+  "complete_energy": {
+    "work": "/absolute/new_complete_energy_run",
+    "reference_run": "/absolute/complete_energy_reference",
+    "pseudo_dir": "/absolute/pseudopotentials",
+    "native_binary": "/absolute/qe_adapter_build/native_large.x",
+    "sizes": [
+      4,
+      6
+    ],
+    "reuse_cases": {}
+  }
+}

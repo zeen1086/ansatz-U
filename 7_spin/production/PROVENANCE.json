@@ -1,0 +1,59 @@
+{
+  "imported_on": "2026-11-16",
+  "files": {
+    "common.py": {
+      "source": "25_li:/home/25_li/noncollinear/LaNiO2/.run/V1_fullRVR_supercell_J_20261114_r01/kz_batch_20261115_r01/kz_local_20261115_r01/review/code/common.py",
+      "source_sha256": "a1bc03d1c182589397162fec88fddbac1d0f7c701b9fac5cc5dcfc71fef95c64"
+    },
+    "run_material.py": {
+      "source": "25_li:/home/25_li/noncollinear/LaNiO2/.run/V1_fullRVR_supercell_J_20261114_r01/kz_batch_20261115_r01/kz_local_20261115_r01/review/code/run_material.py",
+      "source_sha256": "eeb57bda658801e30323e03b4813536e066d25c730f20e2339256f38decfd67a"
+    },
+    "torque_contract.py": {
+      "source": "25_li:/home/25_li/noncollinear/LaNiO2/.run/V1_fullRVR_supercell_J_20261114_r01/kz_batch_20261115_r01/kz_local_20261115_r01/review/code/torque_contract.py",
+      "source_sha256": "28c13aef011bed5a848b75342b66fa7fd43ec10bfa6c57e024e7d25b4a133daf"
+    },
+    "kz_production.py": {
+      "source": "25_li:/home/25_li/noncollinear/LaNiO2/.run/V1_fullRVR_supercell_J_20261114_r01/kz_batch_20261115_r01/kz_local_20261115_r01/review/code/kz_production.py",
+      "source_sha256": "b7e0f40a6f064585fa7a28fc577845f27c85592bdf703dea767d943aab6336c1"
+    },
+    "density_map.py": {
+      "source": "current/runs/V1_complete_energy_J12_20261116_r01/code/density_map.py",
+      "source_sha256": "728428d744dc4a6df9d51de1711cd73c4e9dd7c9c2d6f169322ca9cd6f4e86d9"
+    },
+    "complete_readout.py": {
+      "source": "current/runs/V1_complete_energy_J12_20261116_r01/code/complete_readout.py",
+      "source_sha256": "ea8a5b6ee89429ae108417557a42d191b71115f33543c624d170552b20f925b1"
+    },
+    "native_input.py": {
+      "source": "current/runs/V1_complete_energy_J12_20261116_r01/code/native_input.py",
+      "source_sha256": "1638c13a14c7b22cf94082b3baf7cd2433ebd8e8c5eb7500f324c09b103639d2"
+    },
+    "native_large.f90": {
+      "source": "current/runs/V1_complete_energy_J12_20261116_r01/code/native_large.f90",
+      "source_sha256": "1a5433c734b2bd4cad05897eb4cc698b899c99f49812026f2e1f01f92689349b"
+    },
+    "Makefile.native": {
+      "source": "current/runs/V1_complete_energy_J12_20261116_r01/code/Makefile.native",
+      "source_sha256": "e4babeea6657cdd9ee61e05c44bc1b330810f4a9cb47d69976a13422a0f85a9a"
+    },
+    "check_large_native.py": {
+      "source": "current/runs/V1_complete_energy_J12_20261116_r01/code/check_large_native.py",
+      "source_sha256": "562c43b4a54f8f9fcf5df746e31ae6b2027a1cc3e022fa030a91ee843078c37f"
+    },
+    "complete_energy.py": {
+      "source": "current/runs/V1_complete_energy_J12_L08_20261116_r01/code/production.py",
+      "source_sha256": "89aeb04ac8688ec2de6e3c5c18fe1a731b8e270f73c4f22ecc8600dc05b414fc"
+    },
+    "summarize_energy.py": {
+      "source": "current/runs/V1_complete_energy_J12_L08_20261116_r01/code/summarize.py",
+      "source_sha256": "1147425ef2257325a134f83d9b0bcfed519f6519ee730be6c9b437a0edf5a2e5"
+    },
+    "energy_torque.py": {
+      "source": "current/runs/V1_complete_energy_min_20261116_r01/code/energy_torque.py",
+      "source_sha256": "6bb4a618c9d51303b87560988b5e82104d636a113926606fa6e77b0d50e66cda"
+    }
+  },
+  "adaptations": "External JSON paths; repository-local imports; explicit batch phases replace historical job migration; unified L=4,6,8 complete-energy driver. Numerical kernels preserved.",
+  "scope": "Source-only production integration; external model weights, data and results are not included."
+}

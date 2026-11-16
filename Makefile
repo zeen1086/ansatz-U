@@ -15,8 +15,21 @@ JOINT = $(ROOT)/common/numerics.f90 $(ROOT)/4_potential/fit/joint_features.f90 $
 JOINT_OBJECTS = $(addprefix $(BUILD)/joint/,numerics.o joint_features.o joint_npy.o joint_model.o joint_svd.o)
 RUNTIME = $(filter-out $(ROOT)/common/numerics.f90,$(CORE)) $(ROOT)/6_RVR/joint_rvr.f90 $(ROOT)/7_spin/joint/cal_Hsk.f90
 RUNTIME_OBJECTS = $(addprefix $(BUILD)/joint_runtime/,frozen_io.o tensor_rvr.o local_ansatz.o joint_rvr.o cal_Hsk.o)
-.PHONY: all legacy mpi joint joint-rvr clean
-all: $(BUILD)/ansatzU legacy joint joint-rvr
+LOCAL_SOURCES = $(CORE) $(ROOT)/4_potential/fit/joint_npy.f90 $(ROOT)/6_RVR/local_vfunc.f90 $(ROOT)/6_RVR/local_rvr.f90
+LOCAL_OBJECTS = $(addprefix $(BUILD)/local/,numerics.o frozen_io.o tensor_rvr.o local_ansatz.o joint_npy.o local_vfunc.o local_rvr.o)
+.PHONY: all legacy mpi joint joint-rvr local-rvr clean
+all: $(BUILD)/ansatzU legacy joint joint-rvr local-rvr
+local-rvr: $(BUILD)/local/cal_RVR_split $(BUILD)/local/combine $(BUILD)/local/cal_Hsk
+$(BUILD)/local/.built: $(LOCAL_SOURCES) | $(BUILD)
+	mkdir -p $(BUILD)/local
+	cd $(BUILD)/local && $(FC) $(FFLAGS) -c $(LOCAL_SOURCES)
+	touch $@
+$(BUILD)/local/cal_RVR_split: $(ROOT)/6_RVR/local/cal_RVR_split.f90 $(BUILD)/local/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
+$(BUILD)/local/combine: $(ROOT)/6_RVR/local/combine.f90 $(BUILD)/local/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
+$(BUILD)/local/cal_Hsk: $(ROOT)/7_spin/local/cal_Hsk.f90 $(BUILD)/local/.built
+	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
 $(BUILD):
 	@case "$(abspath $(BUILD))/" in "$(ROOT)/"*) echo 'BUILD must be outside the source delivery'; exit 1;; esac
 	mkdir -p $(BUILD)
