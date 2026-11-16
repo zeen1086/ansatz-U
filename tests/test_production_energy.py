@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'7_spin/production'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'7_spin'))
 import complete_readout
 import density_map
 import energy_torque
@@ -34,11 +34,39 @@ class ProductionEnergyTest(unittest.TestCase):
             command = ('import complete_energy as c; '
                        'print(c.ROOT); print(c.oldcase(4, 1)); print(c.oldcase(6, 1))')
             env = dict(os.environ, ANSATZ_RUN_CONFIG=str(path),
-                       PYTHONPATH=str(repo/'7_spin/production'))
+                       PYTHONPATH=str(repo/'7_spin'))
             result = subprocess.run([sys.executable, '-B', '-c', command], cwd=tmp,
                                     env=env, capture_output=True, text=True, check=True)
             self.assertEqual(result.stdout.splitlines(), [str(Path(tmp)/'inputs'),
                 str(Path(tmp)/'existing/case_01'), str(Path(tmp)/'output/coefficients/L06/case_01')])
+
+    def test_shared_and_spin_layout_and_legacy_paths(self):
+        repo = Path(__file__).resolve().parents[1]
+        config = json.loads((repo/'examples/7_spin/production.json').read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared, spins = root/'shared', root/'spins'
+            config.update(work=str(shared), spin_work=str(spins), input_root=str(spins))
+            config['complete_energy'].update(work=str(spins/'complete'), shared_work=str(shared/'complete'))
+            inputs = spins/'inputs/L04'
+            inputs.mkdir(parents=True)
+            (inputs/'CASE.json').write_text(json.dumps({'angle_configurations': [{}, {}]}))
+            path = root/'config.json'
+            command = ('import common as c, run_material as r, complete_energy as e; '
+                       'print(c.SOURCE); print(c.WORK); print(c.SPINS); '
+                       'print(r.case_root(4, 1, 2, .001)[2]); print(e.SHARED); print(e.folder(4, 1))')
+            env = dict(os.environ, ANSATZ_RUN_CONFIG=str(path), PYTHONPATH=str(repo/'7_spin'))
+            for legacy in (False, True):
+                if legacy:
+                    del config['spin_work']
+                    del config['complete_energy']['shared_work']
+                path.write_text(json.dumps(config))
+                result = subprocess.run([sys.executable, '-B', '-c', command], cwd=tmp,
+                    env=env, capture_output=True, text=True, check=True)
+                output = shared if legacy else spins
+                energy_shared = spins/'complete' if legacy else shared/'complete'
+                self.assertEqual(result.stdout.splitlines(), list(map(str, [repo, shared, output,
+                    output/'J/L04/mesh2_h0.001/case_01', energy_shared, spins/'complete/L04/case_01'])))
 
     def test_complete_functional_and_fixed_electron_response(self):
         energy_torque.selfcheck()

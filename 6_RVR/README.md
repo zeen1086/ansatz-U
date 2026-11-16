@@ -103,4 +103,4 @@ k 点文件首行为点数，随后每行 `kx ky kz weight`，权重和为 1。�
 
 添加 `--components` 输出 H0/Hv/HB/HU 分量；添加 `--keep-intermediates` 保留系数、原生输入和诊断文件。成功校验全部结果后才清理中间文件，失败时保留现场。单构型 `cal_Hsk` 不自动续算已有输出目录。
 
-批量能量、转矩与生产检查点用法见 [production 使用说明](../7_spin/production/README.md)。
+批量能量、转矩与生产检查点用法见 [production 使用说明](../7_spin/README.md)。

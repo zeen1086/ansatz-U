@@ -22,7 +22,7 @@ $(BUILD)/local/.built: $(LOCAL_SOURCES) | $(BUILD)
 	touch $@
 $(BUILD)/local/rvr: $(ROOT)/6_RVR/rvr.f90 $(BUILD)/local/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
-$(BUILD)/local/cal_Hsk: $(ROOT)/7_spin/local/cal_Hsk.f90 $(BUILD)/local/.built
+$(BUILD)/local/cal_Hsk: $(ROOT)/7_spin/cal_Hsk.f90 $(BUILD)/local/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/local $< $(LOCAL_OBJECTS) -o $@ $(LIBS)
 $(BUILD):
 	@case "$(abspath $(BUILD))/" in "$(ROOT)/"*) echo 'BUILD must be outside the source delivery'; exit 1;; esac

@@ -5,7 +5,7 @@ from native_input import input_file,write_density,read_density
 from density_map import grid_to_cells,cells_to_grid
 from common import CONFIG, compute_node
 compute_node()
-config=CONFIG['complete_energy'];R=Path(config['work']);old=Path(config['reference_run']);out=R/'native_check';out.mkdir(parents=True,exist_ok=False)
+config=CONFIG['complete_energy'];R=Path(config.get('shared_work', config['work']));old=Path(config['reference_run']);out=R/'native_check';out.mkdir(parents=True,exist_ok=False)
 rho=grid_to_cells(read_density(old/'inputs/reference_actual/DENSITY.bin',2),2);idx=[(x%2)*2+y%2 for x in range(4) for y in range(4)]
 write_density(out/'density.bin',cells_to_grid(rho[idx],4),4);input_file(out,4)
 (out/'input_list.txt').write_text(f'1\nreference "{out}/density.bin" 0 0 1\n')

@@ -6,14 +6,15 @@ import subprocess
 import numpy as np
 from scipy.special import erfc
 
-SOURCE = Path(__file__).resolve().parents[2]
+SOURCE = Path(__file__).resolve().parents[1]
 CONFIG_PATH = Path(os.environ.get('ANSATZ_RUN_CONFIG', SOURCE/'examples/7_spin/production.json')).resolve()
 CONFIG = json.loads(CONFIG_PATH.read_text())
 ROOT = Path(CONFIG['input_root'])
 INTERFACE = Path(CONFIG['interface'])
 BUILD = Path(CONFIG['native_build'])
 REF = Path(CONFIG['references'])
-WORK = Path(CONFIG['work'])
+WORK = Path(CONFIG['work'])  # Shared RVR and basis inputs.
+SPINS = Path(CONFIG.get('spin_work', CONFIG['work']))
 PYTHON = CONFIG['python']
 RY = 13.605693122994
 SIGMA = .01*RY
@@ -63,7 +64,7 @@ def chemical_potential(e: np.ndarray, weights: np.ndarray, electrons: int) -> fl
 
 
 def require_regression() -> None:
-    report = json.loads((WORK/'regression/RESULT.json').read_text())
+    report = json.loads((SPINS/'regression/RESULT.json').read_text())
     if not report['passed'] or report['model_id'] != CONFIG['model_id']:
         raise RuntimeError('The real 2x2 Hamiltonian/band regression must pass first')
 

@@ -11,7 +11,7 @@ import tempfile
 import time
 import numpy as np
 from scipy.special import erfc
-from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, PYTHON, SIGMA, SOURCE
+from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, SPINS, PYTHON, SIGMA, SOURCE
 from common import compute_node, run, save, load_h, chemical_potential, require_regression,require_calculation
 from torque_contract import derivative,contract_batch
 
@@ -126,7 +126,7 @@ def coefficients(structure: Path, directory: Path, sites: list[int], step: float
 
 def regression_assemble() -> None:
     binding();data=np.load(REF/'data.npz'); base=dict(np.load(ROOT/'inputs/L02/structure.npz'))
-    k=data['K'];out=WORK/'regression';out.mkdir(parents=True,exist_ok=True)
+    k=data['K'];out=SPINS/'regression';out.mkdir(parents=True,exist_ok=True)
     for name in ('Neel_anchor','fm'):
         row=out/name;row.mkdir(exist_ok=True)
         base['spins']=data['u'][data['names'].tolist().index(name)][[0,2,1,3]]
@@ -141,7 +141,7 @@ def regression_assemble() -> None:
 def case_root(length: int, index: int, mesh: int, step: float):
     definition=json.loads((ROOT/f'inputs/L{length:02}/CASE.json').read_text())
     case=definition['angle_configurations'][index]
-    work=WORK/f'J/L{length:02}/mesh{mesh}_h{step:g}/case_{index:02}'
+    work=SPINS/f'J/L{length:02}/mesh{mesh}_h{step:g}/case_{index:02}'
     return definition,case,work
 
 

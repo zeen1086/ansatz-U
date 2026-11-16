@@ -1,23 +1,25 @@
 {
   "python": "/absolute/existing/python",
-  "input_root": "/absolute/material_inputs",
-  "interface": "/absolute/v1_interface",
+  "input_root": "/absolute/repo/7_spin/spins",
+  "interface": "/absolute/repo/7_spin/shared/model",
   "native_build": "/absolute/build",
-  "references": "/absolute/common_wannier/references",
-  "work": "/absolute/material_run",
+  "references": "/absolute/repo/7_spin/shared/wannier/references",
+  "work": "/absolute/repo/7_spin/shared",
   "model_id": "c21d4352e9c33e86eeaade75fe3d33f9baddba3a48214a92110679ff2bfdae67",
   "parameters_sha256": "9353c65c9fa5b04a6e0b297b59e7eca827a3dae81149699f91a2eef09cb6c7c8",
   "old_J": "/absolute/optional/Jij_periodic_meV.csv",
   "rvr_slices": {},
   "complete_energy": {
-    "work": "/absolute/new_complete_energy_run",
-    "reference_run": "/absolute/complete_energy_reference",
-    "pseudo_dir": "/absolute/pseudopotentials",
+    "work": "/absolute/repo/7_spin/spins/complete_energy",
+    "reference_run": "/absolute/repo/7_spin/shared/complete_reference",
+    "pseudo_dir": "/absolute/repo/7_spin/shared/pseudopotentials",
     "native_binary": "/absolute/qe_adapter_build/native_large.x",
     "sizes": [
       4,
       6
     ],
-    "reuse_cases": {}
-  }
+    "reuse_cases": {},
+    "shared_work": "/absolute/repo/7_spin/shared/complete_energy"
+  },
+  "spin_work": "/absolute/repo/7_spin/spins"
 }

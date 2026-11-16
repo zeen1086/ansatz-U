@@ -13,6 +13,7 @@ from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
 ENERGY=CONFIG['complete_energy']
 R=Path(ENERGY['work']);OLD=WORK;MIN=Path(ENERGY['reference_run'])
+SHARED=Path(ENERGY.get('shared_work', ENERGY['work']))
 SIZES=ENERGY['sizes']
 
 def frozen():
@@ -46,7 +47,7 @@ def stage_bloch(z):
     return cache,slab
 
 def reference(z,slab,dv):
-    out=R/'reference';out.mkdir(exist_ok=True)
+    out=SHARED/'reference';out.mkdir(exist_ok=True)
     if (out/f'z{z}.npz').exists():return
     data=np.load(REF/'data.npz');i0=data['names'].tolist().index('Neel_anchor');mu=np.load(MIN/'results/BANDS.npz')['mu'][1,0]
     density=np.zeros((4,NG,4));N=np.zeros((4,10,10),complex);count=0.
@@ -66,7 +67,7 @@ def reference(z,slab,dv):
             error=float(np.max(abs(local-direct)))
             h0error=float(np.max(abs(h0-a['H0_eV'][np.ix_(ix,ix)])))
             delta=reconstructed-h;shift=float(np.trace(delta).real/240)
-            save(R/'reference/OPERATOR_PARITY.json',dict(local_projection_error_eV=error,H0_roundtrip_error_eV=h0error,DFT_H_uniform_gauge_shift_eV=shift,DFT_H_residual_after_uniform_alignment_eV=float(np.max(abs(delta-shift*np.eye(240))))))
+            save(SHARED/'reference/OPERATOR_PARITY.json',dict(local_projection_error_eV=error,H0_roundtrip_error_eV=h0error,DFT_H_uniform_gauge_shift_eV=shift,DFT_H_residual_after_uniform_alignment_eV=float(np.max(abs(delta-shift*np.eye(240))))))
             assert max(error,h0error)<1e-8,('Density map/native projection mismatch',error,h0error)
         density+=fold_density(psi,p,2)/128/dv;count+=f.sum()/128
         for j,site in enumerate([0,2,1,3]):
@@ -76,12 +77,12 @@ def reference(z,slab,dv):
 
 def background(z,dv):
     barrier('reference',z)
-    if z==0 and not (R/'reference/background.npz').exists():
-        rows=[np.load(R/f'reference/z{i}.npz') for i in range(8)];act=sum(v['density'] for v in rows);n=sum(v['N'] for v in rows)
+    if z==0 and not (SHARED/'reference/background.npz').exists():
+        rows=[np.load(SHARED/f'reference/z{i}.npz') for i in range(8)];act=sum(v['density'] for v in rows);n=sum(v['N'] for v in rows)
         full=grid_to_cells(read_density(MIN/'inputs/reference_actual/DENSITY.bin',2),2);nt=np.load(MIN/'results/FIELDS.npz')['NDFT'][0][[0,2,1,3]]
         assert abs(act[:,:,0].sum()*dv-84)<1e-7
-        np.savez(R/'reference/background.npz',density=full-act,N=nt-n)
-    wait(R/'reference/background.npz')
+        np.savez(SHARED/'reference/background.npz',density=full-act,N=nt-n)
+    wait(SHARED/'reference/background.npz')
 
 def wave_cache(L,z,cache,slab):
     paths={};checks=[];cells=np.array(list(product(range(L),repeat=2)))
@@ -95,7 +96,7 @@ def wave_cache(L,z,cache,slab):
             else:psi[j]=np.einsum('q,qgo->go',weights.reshape(-1)[ix],slab.reshape(64,NG,30)[ix],optimize=True)
         psi.flush();S,T,err=metric(psi);np.savez(cache/f'L{L}_k{ki}_metric.npz',T=T,gram_max=err)
         checks.append(dict(k=ki,gram_max=err))
-    save(R/f'L{L:02}/metrics/z{z}.json',dict(points=checks))
+    save(SHARED/f'L{L:02}/metrics/z{z}.json',dict(points=checks))
     return paths
 
 def spectrum(L,case,z,paths,cache,rvr):
@@ -139,7 +140,7 @@ def density_stage(L,case,z,paths,dv,st):
     print('DENSITY_CASE',L,case,z,time.monotonic()-start,flush=True)
 
 def assemble_density(L,case,dv):
-    p=folder(L,case);rows=[np.load(p/f'density_z{i}.npz') for i in range(8)];bg=np.load(R/'reference/background.npz');idx=np.array([(x%2)*2+y%2 for x,y in product(range(L),repeat=2)])
+    p=folder(L,case);rows=[np.load(p/f'density_z{i}.npz') for i in range(8)];bg=np.load(SHARED/'reference/background.npz');idx=np.array([(x%2)*2+y%2 for x,y in product(range(L),repeat=2)])
     rho=sum(r['density'] for r in rows)+bg['density'][idx];N=sum(r['N'] for r in rows)+bg['N'][idx]
     charge=float(rho[:,:,0].sum()*dv);assert abs(charge-41*L*L)<1e-6,(L,case,charge)
     np.savez(p/'DENSITY.npz',N=N);write_density(p/'DENSITY.bin',cells_to_grid(rho,L),L)
@@ -226,6 +227,7 @@ def main(z):
     if not 0<=z<8 or not SIZES or len(set(SIZES))!=len(SIZES) or any(L not in (4,6,8) for L in SIZES):
         raise ValueError('Require kz worker 0..7 and distinct sizes from 4,6,8')
     R.mkdir(parents=True,exist_ok=True)
+    SHARED.mkdir(parents=True,exist_ok=True)
     for L in SIZES:
         if str(L) not in ENERGY.get('reuse_cases',{}):prepare_coefficients(L,z)
     meta=json.loads((INTERFACE/'V_func_tmp/V_FUNC.json').read_text());dv=abs(np.linalg.det(np.array(meta['primitive_cell_A'])/.529177210903))/NG
@@ -237,7 +239,7 @@ def main(z):
     original,_,_,full_size=layout(OLD/'RVR/B_general')
     if sectors!=(z/8,) or size!=full_size or prefix[:32]!=original[:32] or prefix[36:]!=original[36:]:
         raise ValueError('Cached RVR does not match the full source and kz')
-    save(R/f'reused_RVR_z{z}.json',dict(path=str(rvr),bytes=size))
+    save(SHARED/f'reused_RVR_z{z}.json',dict(path=str(rvr),bytes=size))
     for L in SIZES:
         paths=wave_cache(L,z,cache,slab)
         for case in range(11):

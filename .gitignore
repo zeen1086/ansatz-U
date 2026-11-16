@@ -79,3 +79,9 @@ tmp/
 .env.*
 
 !examples/**/*.dat
+
+# V1 runtime data: keep the layout, never commit scientific payloads.
+/7_spin/shared/*
+!/7_spin/shared/.gitkeep
+/7_spin/spins/*
+!/7_spin/spins/.gitkeep

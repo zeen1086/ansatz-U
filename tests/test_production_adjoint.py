@@ -7,7 +7,7 @@ import sys
 import tempfile
 import numpy as np
 from unittest.mock import patch
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'7_spin/production'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'7_spin'))
 import torque_contract
 from torque_contract import contract_batch,derivative
 

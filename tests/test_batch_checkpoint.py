@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 
 import sys
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'7_spin/production'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'7_spin'))
 import run_material
 
 
