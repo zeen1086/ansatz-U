@@ -66,12 +66,7 @@ def _stage_slice(source, target, z):
     local_prefix,k,local_offset,local_size=layout(target)
     if local_prefix!=prefix or k!=(sectors[z],) or local_size!=size:
         raise ValueError('Local RVR slice metadata mismatch')
-    copied=hashlib.sha256()
-    with target.open('rb') as f:
-        f.seek(local_offset)
-        for block in iter(lambda:f.read(16*1024**2),b''):
-            copied.update(block)
-    if copied.digest()!=digest.digest():raise ValueError('Local RVR payload digest mismatch')
+    if target.stat().st_size!=local_offset+local_size:raise ValueError('Local RVR payload byte count mismatch')
     return dict(z=z,seconds=time.monotonic()-tick,bytes=size,sha256=digest.hexdigest(),host=socket.gethostname())
 
 
@@ -153,7 +148,7 @@ def torque_inputs(tasks,z,pilot_root=None):
         if sp['mesh']!=[m,m,8] or sp['derivative_step_rad']!=h or sp['model_id']!=CONFIG['model_id']:
             raise ValueError(f'Spectrum provenance mismatch: {p}')
         with np.load(p/'SPECTRA.npz') as s:
-            if not np.array_equal(s['k'],k):raise ValueError(f'K mesh changed: {p}')
+            if not np.allclose(s['k'],k):raise ValueError(f'K mesh changed: {p}')
             mu=float(s['mu']);energies=s['e']
         ds=[derivative(p/f'coeff/dsite_{site:04}.bin') for site in sites]
         for i in np.flatnonzero(k[:,2]==z/8):

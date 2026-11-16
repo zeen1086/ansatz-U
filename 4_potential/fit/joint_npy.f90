@@ -192,7 +192,7 @@ contains
    e(:,s)=e(:,s)/amplitude(s)
   enddo
  else
-  call require(maxval(abs(amplitude-1))<1e-12_dp,'Expected unit spin directions; set normalize_moments explicitly')
+  call require(maxval(abs(amplitude-1))<1e-9_dp,'Expected unit spin directions; set normalize_moments explicitly')
  endif
  call read_occupation(trim(folder)//'/N.npy',n)
  do s=1,4

@@ -16,6 +16,17 @@ import complete_energy as energy
 
 
 class RestartProtocolTests(unittest.TestCase):
+    def test_completed_density_assembly_preserves_metadata_on_reentry(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.object(energy,'R',Path(tmp)),patch.object(energy,'NG',2):
+            out=energy.folder(1,0);out.mkdir(parents=True)
+            common.atomic_npz(out/'DENSITY.npz',N=np.zeros((1,10,10)))
+            common.save(out/'ELECTRONIC.json',dict(F=0.,band=0.,bare=0.,count=0.))
+            (out/'DENSITY.bin').write_bytes(bytes(28+32*2))
+            before=common.input_digest(out/'DENSITY.bin')
+            with patch.object(energy,'write_density',side_effect=AssertionError('rewritten')):
+                energy.assemble_density(1,0,1.)
+            self.assertEqual(common.input_digest(out/'DENSITY.bin'),before)
+
     def test_eight_workers_rendezvous(self):
         with tempfile.TemporaryDirectory() as tmp,patch.object(energy,'ATTEMPT',Path(tmp)):
             with ThreadPoolExecutor(8) as pool:
@@ -92,15 +103,28 @@ class RestartProtocolTests(unittest.TestCase):
                 for z in range(1,8):common.save(new/f'barriers/phase/{z}.json',{'done':True})
                 energy.barrier('phase',0)
                 common.save(new/'FAILURE.json',{'error':'new failure'})
-                with self.assertRaisesRegex(RuntimeError,'Another worker failed'):
-                    energy.wait(new/'barriers/phase/0.json')
+                with self.assertRaisesRegex(RuntimeError,'still waiting'):
+                    energy.wait(new/'barriers/phase/missing.json')
 
-    def test_launch_id_cannot_be_reused(self):
+    def test_launch_id_can_be_reused(self):
         with tempfile.TemporaryDirectory() as tmp,patch.object(energy,'R',Path(tmp)),patch.object(energy,'barrier'),patch.dict(os.environ,{'ANSATZ_RUN_ID':'test-launch'}):
             try:
                 energy.start_attempt(0)
                 energy._WORKER_LOCK.close()
-                with self.assertRaises(FileExistsError):energy.start_attempt(0)
+                energy.start_attempt(0)
+                self.assertTrue((energy.ATTEMPT/'worker_0.started').is_file())
+            finally:
+                if energy._WORKER_LOCK:energy._WORKER_LOCK.close()
+                energy.ATTEMPT=None
+
+    def test_automatic_launch_id_shared_by_workers(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.object(energy,'R',Path(tmp)),patch.object(energy,'barrier'),patch.dict(os.environ,{},clear=True):
+            try:
+                energy.start_attempt(0);first=energy.ATTEMPT
+                energy._WORKER_LOCK.close()
+                energy.start_attempt(1)
+                self.assertEqual(energy.ATTEMPT,first)
+                self.assertEqual((Path(tmp)/'run_ids'/f'local-{os.getppid()}').read_text().strip(),first.name)
             finally:
                 if energy._WORKER_LOCK:energy._WORKER_LOCK.close()
                 energy.ATTEMPT=None

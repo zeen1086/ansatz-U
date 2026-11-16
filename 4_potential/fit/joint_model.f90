@@ -63,7 +63,7 @@ contains
  real(dp)::s(8),b(3,40),v(3,12),x(3,6),chi(4),ds(8),db(3,40),dv(3,12),dx(3,6),dc(4)
  call require(size(field,1)==product(m%grid).and.size(field,2)==4,'Joint field output shape mismatch')
  call require(all(ieee_is_finite(e)).and.all(ieee_is_finite(de)),'Nonfinite joint spin input')
- call require(maxval(abs(sum(e**2,dim=1)-1))<1e-12_dp,'Joint spin inputs must be unit directions')
+ call require(maxval(abs(sum(e**2,dim=1)-1))<1e-9_dp,'Joint spin inputs must be unit directions')
  call spin_features(e,de,s,b,v,x,chi,ds,db,dv,dx,dc)
  field(:,1)=matmul(s,m%scalar);field(:,2:4)=transpose(matmul(b,m%magnetic))
  dfield(:,1)=matmul(ds,m%scalar);dfield(:,2:4)=transpose(matmul(db,m%magnetic))

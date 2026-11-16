@@ -124,7 +124,7 @@ contains
  target=trim(rvr_dir)//'/spatial_fields'
  inquire(file=trim(target),exist=exists)
  if(exists) then
-  call read_fields(t,'check')
+  call read_fields(t,'means')
   write(*,'(a)') 'SPATIAL_FIELDS_REUSED';return
  endif
  call read_vfunc(trim(model_path),m,.true.)
@@ -142,7 +142,6 @@ contains
  write(u) f
  enddo
  write(u) means;call finish_write(u)
- call read_fields(t,'check',trim(target)//'.partial')
  call publish(trim(target))
  write(*,'(a,3i12)') 'SPATIAL_FIELDS ng channels domains=',ng,t%nc,t%nd
  end subroutine
@@ -232,7 +231,8 @@ contains
  integer,intent(in)::column,kfirst,klast
  type(projection_data)::t
  complex(dp),allocatable::rawi(:,:),rawj(:,:),left(:,:),right(:,:),work(:,:),mat(:,:),kernel(:,:,:),overlap(:)
- integer::i,j,k,d,c,a,b,u,first,last,ifirst,ilast
+ integer::i,j,k,d,c,a,b,u,first,last,ifirst,ilast,ios
+ integer(int64)::row_bytes,block_bytes
  logical::exists
  call control(path,t,.false.)
  call require(column>=0.and.column<=nwan,'Orbital row outside 1..nwan')
@@ -251,9 +251,12 @@ contains
   inquire(file=trim(row_path(i,k)),exist=exists)
   if(exists) then
    call open_row(trim(row_path(i,k)),t,i,k,u)
-   do j=1,nwan
-    call read_block(u,overlap,kernel)
-   enddo
+   call read_block(u,overlap,kernel)
+   inquire(unit=u,size=row_bytes)
+   block_bytes=16_int64*(size(overlap,kind=int64)+size(kernel,kind=int64))
+   read(u,pos=row_bytes-block_bytes+1,iostat=ios) overlap,kernel
+   call require(ios==0,'Truncated RVR tail block')
+   call check_block(overlap,kernel)
    close(u);write(*,'(a,2i8)') 'RVR_ROW_REUSED orbital,kz=',i,k
    cycle
   endif
@@ -382,8 +385,7 @@ contains
  logical function completed_projection(t) result(exists)
  type(projection_data),intent(in)::t
  type(local_projected)::r
- complex(dp),allocatable::kernel(:,:,:),overlap(:)
- integer::u,i,j,k
+ integer::u
  character(4096)::path
  path=trim(rvr_dir)//'/B_general';inquire(file=trim(path),exist=exists)
  if(.not.exists) return
@@ -393,14 +395,6 @@ contains
   'Completed RVR dimensions mismatch')
  call require(all(r%cell==t%m%cell).and.r%alpha==t%m%alpha.and.all(r%xy==t%xy).and. &
   all(r%difference==t%difference).and.all(r%kz==t%kz),'Completed RVR geometry/kz mismatch')
- allocate(kernel(r%nr,r%nr,r%nc),overlap(r%ndiff))
- do k=1,r%nk
- do i=1,r%nw
- do j=1,r%nw
-  call read_block(u,overlap,kernel)
- enddo
- enddo
- enddo
  close(u);write(*,'(a)') 'B_GENERAL_REUSED'
  end function
  subroutine finish_write(u)

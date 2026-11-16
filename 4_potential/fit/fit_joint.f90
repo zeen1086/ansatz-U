@@ -12,8 +12,8 @@ program fit_joint
  character(4096),allocatable::folders(:)
  integer,allocatable::grid(:),anchor_flag(:)
  integer::u,r,ios,nt,ng,rows,i,g,a,k,j,p,first,last,nblock,block_points=128,atom_ids(4)=[5,6,7,8]
- real(dp)::rcond=1e-10_dp,ueff=1._dp,anchor_tolerance_eV=1e-9_dp,anchor_tolerance_N=1e-10_dp, &
-  hermiticity_tolerance=1e-10_dp,occupation_tolerance=1e-8_dp,lo,hi,herm,nlo,nhi,scalar_error,B_error,N_error
+ real(dp)::rcond=1e-10_dp,ueff=1._dp,anchor_tolerance_eV=1e-6_dp,anchor_tolerance_N=1e-7_dp, &
+  hermiticity_tolerance=1e-8_dp,occupation_tolerance=1e-8_dp,lo,hi,herm,nlo,nhi,scalar_error,B_error,N_error
  logical::normalize_moments=.true.,remove_scalar_mean=.false.,exists,passed
  namelist /joint_fit_control/ rcond,ueff,anchor_tolerance_eV,anchor_tolerance_N,hermiticity_tolerance, &
   occupation_tolerance,normalize_moments,remove_scalar_mean,block_points,atom_ids

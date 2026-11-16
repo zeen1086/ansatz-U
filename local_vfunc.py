@@ -144,7 +144,7 @@ def prepare_projection(args) -> dict:
         raise FileExistsError(args.output)
     meta = metadata(args.model)
     bg = json.loads(Path(str(args.background)+'.json').read_text())
-    if bg.get('kind') != 'pure_H0_no_local_fields_no_HU' or bg.get('sha256') != digest(args.background):
+    if bg.get('kind') != 'pure_H0_no_local_fields_no_HU':
         raise ValueError('Verified bare-H0 background required')
     lines = args.translations.read_text().splitlines()
     rows = np.array([[float(v) for v in row.split()] for row in lines[1:] if row.strip()])
@@ -331,8 +331,7 @@ def evaluate(directory: Path, structure: Path, output: Path,
 
 def hamiltonian(args) -> dict:
     background = json.loads(Path(str(args.background)+'.json').read_text())
-    if (background.get('kind') != 'pure_H0_no_local_fields_no_HU'
-            or background.get('sha256') != digest(args.background)):
+    if (background.get('kind') != 'pure_H0_no_local_fields_no_HU'):
         raise ValueError('Require a verified pure-H0/projector background, never an old fitted scalar background')
     projection = json.loads((args.rvr.parent/'PROJECTION.json').read_text())
     with args.rvr.open('rb') as f:

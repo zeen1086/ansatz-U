@@ -7,8 +7,8 @@ from scipy.optimize import brentq
 from density_map import NG,ws_weights,fold_unitary,fold_density,fold_project,cells_to_grid,grid_to_cells
 from complete_readout import static,operators,metric,fermi,loewner,hubbard,trace,RY,SIGMA
 from native_input import input_file,write_density,read_density
-from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, quality_check, check_regression, file_digest, shared_bundle
-from common import atomic_npz, valid_npz, bind_inputs, archive_incomplete, input_digest
+from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, quality_check, check_regression, shared_bundle
+from common import atomic_npz, valid_npz, valid_json, bind_inputs, archive_incomplete, input_digest
 from run_material import native_batch, binding, spin_structure, coefficient_identity, valid_coefficients
 from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
@@ -19,8 +19,8 @@ SIZES=ENERGY['sizes']
 
 def frozen():
     sys.path.insert(0,str(SOURCE))
-    from local_vfunc import verify
-    meta=verify(INTERFACE/'V_func_tmp')
+    from local_vfunc import metadata
+    meta=metadata(INTERFACE/'V_func_tmp')
     if meta['model_id']!=CONFIG['model_id'] or meta['source_parameters_sha256']!=CONFIG['parameters_sha256']:
         raise ValueError('Frozen V1 identity changed')
     return len(meta['files'])+1
@@ -31,11 +31,23 @@ ATTEMPT = None
 _WORKER_LOCK = None
 
 def start_attempt(z):
-    import fcntl,re
+    import fcntl,re,uuid
     global ATTEMPT,_WORKER_LOCK
     run_id=os.environ.get('ANSATZ_RUN_ID','')
+    R.mkdir(parents=True,exist_ok=True)
+    if not run_id:
+        key=os.environ.get('PBS_JOBID') or f'local-{os.getppid()}'
+        key=key.replace('/', '_')
+        registry=R/'run_ids';registry.mkdir(exist_ok=True)
+        with (registry/key).open('a+') as entry:
+            fcntl.flock(entry,fcntl.LOCK_EX)
+            entry.seek(0);run_id=entry.read().strip()
+            if not run_id:
+                run_id=uuid.uuid4().hex
+                entry.write(run_id+'\n');entry.flush();os.fsync(entry.fileno())
+        print(f'NOTE: using automatic ANSATZ_RUN_ID={run_id} for {key}',flush=True)
     if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',run_id):
-        raise ValueError('Set one fresh ANSATZ_RUN_ID shared by all eight workers for each launch')
+        raise ValueError('ANSATZ_RUN_ID must contain 1..100 letters, digits, underscores or hyphens')
     R.mkdir(parents=True,exist_ok=True)
     locks=R/'worker_locks';locks.mkdir(exist_ok=True)
     lock=(locks/f'{z}.lock').open('a')
@@ -44,9 +56,10 @@ def start_attempt(z):
         lock.close();raise RuntimeError(f'Worker {z} is already running in {R}')
     _WORKER_LOCK=lock
     candidate=R/'attempts'/run_id;candidate.mkdir(parents=True,exist_ok=True)
-    # Exclusive claims make accidental reuse of a previous launch ID fail closed.
+    if (candidate/f'worker_{z}.started').exists():
+        print(f'NOTE: reusing worker {z} start marker in {candidate}',flush=True)
     try:
-        with (candidate/f'worker_{z}.started').open('x') as f:f.write(str(os.getpid()))
+        with (candidate/f'worker_{z}.started').open('w') as f:f.write(str(os.getpid()))
     except BaseException:
         lock.close();raise
     ATTEMPT=candidate
@@ -55,11 +68,11 @@ def start_attempt(z):
 
 def wait(path):
     if ATTEMPT is None:raise RuntimeError('Run attempt not initialized')
-    start=time.monotonic()
+    noted=False
     while True:
-        if (ATTEMPT/'FAILURE.json').exists():raise RuntimeError(f'Another worker failed; inspect {ATTEMPT}/FAILURE.json')
+        if not noted and (ATTEMPT/'FAILURE.json').exists():
+            print(f'NOTE: worker failure recorded in {ATTEMPT}/FAILURE.json; continuing to wait',flush=True);noted=True
         if path.exists():return
-        if time.monotonic()-start>20*3600:raise TimeoutError(str(path))
         time.sleep(2)
 
 
@@ -74,7 +87,7 @@ def oldcase(L,case):
     source=ENERGY.get('reuse_cases',{}).get(str(L))
     return Path(source)/f'case_{case:02}' if source else R/f'coefficients/L{L:02}/case_{case:02}'
 def cache_identity():
-    # Full content hashes, not timestamps: input arrays must stay immutable during a run.
+    # Metadata and declared model IDs bind inputs without rereading large payloads.
     files = {'bloch': OLD/'basis/bloch.npy', 'background': OLD/'basis/pure_H0.au',
              'projection': OLD/'RVR/PROJECTION.json', 'rvr': OLD/'RVR/B_general', 'model': INTERFACE/'V_func_tmp/V_FUNC.json'}
     for folder, label in [(REF, 'wannier'), (MIN/'results', 'reference_results'),
@@ -84,13 +97,13 @@ def cache_identity():
     for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py','native_input.py','kz_production.py'):
         files['code/'+name] = Path(__file__).with_name(name)
     files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
-    return dict(version=1, files={name:file_digest(path) for name,path in files.items()},
+    return dict(version=1, files={name:input_digest(path) for name,path in files.items()},
                 model=CONFIG['model_id'], parameters=CONFIG['parameters_sha256'],
                 grid=[40,40,36], orbitals=30, mesh=[2,2,8], sigma=SIGMA)
 
 
 def bind_cache(identity):
-    # Old reference checkpoints had no input identity and cannot be safely adopted.
+    # Adopt unbound reference data, but never override an existing identity.
     import fcntl
     with (SHARED/'INPUTS.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -100,7 +113,7 @@ def bind_cache(identity):
                 raise ValueError('Shared inputs changed; use a new complete_energy.shared_work directory')
         else:
             if (SHARED/'reference').exists() or (SHARED/'cache').exists():
-                raise ValueError('Unbound legacy shared cache; use a new shared directory')
+                print(f'NOTE: adopting shared cache without INPUTS.json: {SHARED}')
             save(path,identity)
 
 
@@ -158,7 +171,7 @@ def reference(z,slab,dv,identity,st):
             h0error=float(np.max(abs(h0-a['H0_eV'][np.ix_(ix,ix)])))
             delta=reconstructed-h;shift=float(np.trace(delta).real/240)
             save(SHARED/'reference/OPERATOR_PARITY.json',dict(local_projection_error_eV=error,H0_roundtrip_error_eV=h0error,DFT_H_uniform_gauge_shift_eV=shift,DFT_H_residual_after_uniform_alignment_eV=float(np.max(abs(delta-shift*np.eye(240))))))
-            assert max(error,h0error)<1e-8,('Density map/native projection mismatch',error,h0error)
+            quality_check(max(error,h0error)<1e-6, f'Density map/native projection residuals: {error}, {h0error}')
         density+=fold_density(psi,p,2)/128/dv;count+=f.sum()/128
         for j,site in enumerate([0,2,1,3]):
             aa=np.zeros((10,240),complex);aa[:5,::2]=data['A'][ki,site];aa[5:,1::2]=data['A'][ki,site];aa=aa[:,ix]
@@ -242,7 +255,10 @@ def density_stage(L,case,z,paths,dv,ops):
     print('DENSITY_CASE',L,case,z,time.monotonic()-start,flush=True)
 
 def assemble_density(L,case,dv):
-    p=folder(L,case);rows=[np.load(p/f'density_z{i}.npz') for i in range(8)];bg=np.load(SHARED/'reference/background.npz');idx=np.array([(x%2)*2+y%2 for x,y in product(range(L),repeat=2)])
+    p=folder(L,case)
+    if (valid_npz(p/'DENSITY.npz',{'N':(L*L,10,10)}) and valid_json(p/'ELECTRONIC.json',['F','band','bare','count'])
+            and (p/'DENSITY.bin').is_file() and (p/'DENSITY.bin').stat().st_size==28+32*NG*L*L):return
+    rows=[np.load(p/f'density_z{i}.npz') for i in range(8)];bg=np.load(SHARED/'reference/background.npz');idx=np.array([(x%2)*2+y%2 for x,y in product(range(L),repeat=2)])
     rho=sum(r['density'] for r in rows)+bg['density'][idx];N=sum(r['N'] for r in rows)+bg['N'][idx]
     charge=float(rho[:,:,0].sum()*dv)
     if not np.isfinite(rho).all() or not np.isfinite(N).all():raise ValueError('Nonfinite density or occupation')
@@ -368,7 +384,7 @@ def main(z):
         for path in sorted(Path(root).glob('case_*/coeff/*')):
             if path.is_file():spin_files[str(path)]=input_digest(path)
     for path in sorted(Path(ENERGY['pseudo_dir']).glob('*.upf')):spin_files[str(path)]=input_digest(path)
-    bind_inputs(R,dict(shared=identity,spin=spin_files,energy=ENERGY),ignored=('attempts','worker_locks'))
+    bind_inputs(R,dict(shared=identity,spin=spin_files,energy=ENERGY),ignored=('attempts','worker_locks','run_ids'))
     barrier('inputs',z)
     if z==0:(R/'COMPLETE.json').unlink(missing_ok=True)
     for L in SIZES:

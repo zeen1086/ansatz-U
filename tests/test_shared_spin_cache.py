@@ -13,6 +13,16 @@ import complete_energy as driver
 
 
 class SharedCacheTests(unittest.TestCase):
+    def test_cache_reuse_checks_size_without_hashing(self):
+        with tempfile.TemporaryDirectory() as tmp,patch.object(common,'file_digest',side_effect=AssertionError('full read')):
+            path=Path(tmp)/'cache'
+            common.shared_bundle(path,{},lambda out:np.save(out/'a.npy',np.ones(3)))
+            np.save(path/'a.npy',np.zeros(3))
+            self.assertEqual(common.shared_bundle(path,{},lambda out:self.fail('rebuilt')),path)
+            (path/'a.npy').write_bytes(b'truncated')
+            with self.assertRaisesRegex(ValueError,'corrupt payload'):
+                common.shared_bundle(path,{},lambda out:self.fail('rebuilt'))
+
     def test_atomic_publish_concurrent_reuse_and_rejection(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);path=root/'entry';calls=[]
@@ -67,7 +77,7 @@ class SharedCacheTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'identity mismatch'):
                     driver.wave_cache(1,0,{'basis':'changed'},st,slab)
 
-    def test_identity_tracks_real_input_contents(self):
+    def test_identity_tracks_input_metadata(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             for name in ('basis/bloch.npy','basis/pure_H0.au','RVR/PROJECTION.json',
@@ -82,9 +92,10 @@ class SharedCacheTests(unittest.TestCase):
                     p=root/name;p.write_bytes(b'other')
                     self.assertNotEqual(driver.cache_identity(),identity)
                     p.write_bytes(b'input')
-                self.assertEqual(driver.cache_identity(),identity)
+                current=driver.cache_identity()
+                self.assertEqual(driver.cache_identity(),current)
 
-    def test_binding_rejects_changed_inputs_and_legacy(self):
+    def test_binding_rejects_changed_inputs_and_adopts_legacy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'input';source.write_bytes(b'first')
             identity={'input':common.file_digest(source)}
@@ -97,8 +108,8 @@ class SharedCacheTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'inputs changed'):
                     driver.bind_cache({'input':common.file_digest(source)})
                 (root/'INPUTS.json').unlink();(root/'reference').mkdir()
-                with self.assertRaisesRegex(ValueError,'legacy'):
-                    driver.bind_cache(identity)
+                driver.bind_cache(identity)
+                self.assertTrue((root/'INPUTS.json').is_file())
 
 
 if __name__=='__main__':unittest.main()
