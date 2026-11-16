@@ -1,7 +1,6 @@
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 BUILD ?= /tmp/lanio2_ansatzU_build
 FC = gfortran
-MPIFC ?= mpif90
 FFLAGS ?= -O2 -g -fcheck=bounds -ffree-line-length-none
 LEGACYFLAGS = $(FFLAGS) -fdefault-real-8 -fdefault-double-8
 UNAME := $(shell uname -s)
@@ -14,7 +13,7 @@ JOINT = $(ROOT)/common/numerics.f90 $(ROOT)/4_potential/fit/joint_features.f90 $
 JOINT_OBJECTS = $(addprefix $(BUILD)/joint/,numerics.o joint_features.o joint_npy.o joint_model.o joint_svd.o)
 LOCAL_SOURCES = $(ROOT)/common/numerics.f90 $(ROOT)/6_RVR/frozen_io.f90 $(ROOT)/4_potential/fit/joint_npy.f90 $(ROOT)/6_RVR/local_vfunc.f90 $(ROOT)/6_RVR/local_rvr.f90
 LOCAL_OBJECTS = $(addprefix $(BUILD)/local/,numerics.o frozen_io.o joint_npy.o local_vfunc.o local_rvr.o)
-.PHONY: all legacy mpi joint local-rvr clean
+.PHONY: all legacy joint local-rvr clean
 all: local-rvr joint legacy
 local-rvr: $(BUILD)/local/rvr $(BUILD)/local/cal_Hsk
 $(BUILD)/local/.built: $(LOCAL_SOURCES) | $(BUILD)
@@ -37,20 +36,9 @@ $(BUILD)/fit_joint: $(ROOT)/4_potential/fit/fit_joint.f90 $(BUILD)/joint/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/joint $< $(JOINT_OBJECTS) -o $@ $(LIBS)
 $(BUILD)/eval_joint: $(ROOT)/4_potential/fit/eval_joint.f90 $(BUILD)/joint/.built
 	$(FC) $(FFLAGS) -I$(BUILD)/joint $< $(JOINT_OBJECTS) -o $@ $(LIBS)
-# Standalone historical fit/readout tools for existing external data; no old RVR producer.
-legacy: $(BUILD)/fit_new $(BUILD)/tensor_Hsk $(BUILD)/tensor_Hsk_AFM $(BUILD)/combine
+# Independent fitting tool; the V1 spin workflow uses local/cal_Hsk.
+legacy: $(BUILD)/fit_new
 $(BUILD)/fit_new: $(ROOT)/4_potential/fit/fit_mask.f90 $(ROOT)/4_potential/fit/fit_new.f90 | $(BUILD)
 	cd $(BUILD) && $(FC) $(LEGACYFLAGS) -J. $^ -o $@
-$(BUILD)/tensor_Hsk: $(ROOT)/7_spin/cal_Hsk_lanio2.f90 | $(BUILD)
-	$(FC) $(LEGACYFLAGS) $< -o $@
-$(BUILD)/tensor_Hsk_AFM: $(ROOT)/7_spin/AFM/cal_Hsk_lanio2.f90 | $(BUILD)
-	$(FC) $(LEGACYFLAGS) $< -o $@
-$(BUILD)/combine: $(ROOT)/7_spin/combine_lanio2.f90 | $(BUILD)
-	$(FC) $(LEGACYFLAGS) $< -o $@
-mpi: legacy $(BUILD)/band $(BUILD)/calc_tot_ene
-$(BUILD)/band: $(ROOT)/7_spin/band_lanio2.f90 | $(BUILD)
-	$(MPIFC) $(LEGACYFLAGS) $< -o $@ $(LIBS)
-$(BUILD)/calc_tot_ene: $(ROOT)/7_spin/calc_tot_ene_lanio2.f90 | $(BUILD)
-	$(MPIFC) $(LEGACYFLAGS) $< -o $@ $(LIBS)
 clean:
 	@echo 'Build artifacts are external; remove only your owned BUILD directory explicitly.'

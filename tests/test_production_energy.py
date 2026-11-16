@@ -46,6 +46,60 @@ class ProductionEnergyTest(unittest.TestCase):
         complete_readout.full_functional_selfcheck()
         summarize_energy.selfcheck()
 
+    def test_gaussian_free_energy_fixed_number_gradient(self):
+        import common
+        self.assertEqual(common.SIGMA, complete_readout.SIGMA)
+        self.assertEqual(common.RY, complete_readout.RY)
+        spectra = np.array([[-.3, -.02, .1, .4], [-.2, .03, .2, .5]])
+        slopes = np.array([[.2, -.4, .1, .3], [-.1, .5, -.3, .2]])
+        weights = np.array([.3, .7])
+        def read(t):
+            e = spectra+t*slopes
+            mu = common.chemical_potential(e, weights, 2)
+            rows = [complete_readout.fermi(row, mu) for row in e]
+            return weights@np.array([r[2] for r in rows]), np.array([r[0] for r in rows])
+        h = 1e-5
+        derivative = (read(h)[0]-read(-h)[0])/(2*h)
+        self.assertAlmostEqual(derivative, weights@np.sum(read(0)[1]*slopes, axis=1), places=8)
+
+    def test_native_energy_columns_units_and_double_counting(self):
+        import complete_energy
+        # Exercise the production ENERGY.json writer with synthetic QE output.
+        rho = np.array([[2., .1, -.2, .3]])
+        v = np.array([[.4, -.1, .2, .5]])
+        n = np.eye(10, dtype=complex)[None]*.3
+        n[0, 0, 1] = .02j
+        n[0, 1, 0] = -.02j
+        vu = np.eye(10)[None]*.17
+        bare = -4.
+        band = bare+energy_torque.integral(rho, v, 1.)+energy_torque.trace(n, vu)
+        free = band-.07
+        qe = np.array([.2, -.3, -.01, 41., 99., 88., -.4, .13])
+        ry = complete_readout.RY
+        expected, _ = energy_torque.energy(free, 0., rho, v, n, vu,
+            qe[0]*ry, qe[1]*ry, qe[2]*ry, qe[6]*ry, 1.)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            native = root/'L04/native'
+            native.mkdir(parents=True)
+            for i in range(11):
+                case = root/f'L04/case_{i:02}'
+                case.mkdir()
+                np.savez(case/'DENSITY.npz', N=n)
+                (case/'ELECTRONIC.json').write_text(json.dumps(dict(F=free, band=band, bare=bare)))
+                np.savetxt(native/f'case_{i:02}_ENERGY.dat', qe[None])
+            def fake_native(*args, **kwargs):
+                kwargs['stdout'].write('GGA_BRANCH_REEXPORT_COMPLETE')
+                kwargs['stdout'].flush()
+            with patch.object(complete_energy, 'R', root), \
+                 patch.object(complete_energy, 'input_file'), \
+                 patch.object(complete_energy.subprocess, 'run', side_effect=fake_native):
+                complete_energy.native(4)
+            result = json.loads((root/'L04/case_00/ENERGY.json').read_text())
+            self.assertAlmostEqual(result['energy'], expected, places=12)
+            self.assertAlmostEqual(result['terms']['minus_active_potential'], bare-band, places=12)
+            self.assertTrue(result['constant_reference_excluded'])
+
     def test_density_projection_and_fft_gauge(self):
         density_map.selfcheck()
         density_map.fft_selfcheck()

@@ -1,4 +1,4 @@
-"""CrI3 trial-density energy/torque, extended by full complex Dudarev N.
+"""Trial-density energy/torque with full complex Dudarev N.
 All energy arguments use eV; densities and fields must use the same grid/gauge.
 An active Wannier band requires an explicit excluded-space contribution.
 """

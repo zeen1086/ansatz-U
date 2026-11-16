@@ -40,7 +40,7 @@ make local-rvr BUILD=/absolute/external/build
 
 2026-11-16 清理了旧三分量 RVR、scalar8/B40 `joint` RVR、`speedup`、旧 HR 重排和刚性 N0/张量 `ansatzU` 运行入口。旧命令和模板不再受本分支支持，源代码可从 [清理前版本 3e1307a](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1) 查阅；格式、背景定义不同，旧模型不能改名后交给当前 V1。
 
-本次保留拟合阶段：`make joint BUILD=/absolute/build` 构建 `fit_joint/eval_joint`，其 scalar8/B40/复数 N 拟合和求值说明见 [fit](4_potential/fit/README.md)，参数不适用于 V1。`make legacy` 保留 `fit_new` 及 `7_spin` 中读取已有外部历史矩阵的独立工具；旧 RVR 生成链已删除。`make mpi` 仅增加历史 band/能量读出，需已有 MPI 编译器。`make all` 构建 V1 与这些保留的非 MPI 工具。
+拟合工具独立构建：`make joint BUILD=/absolute/build` 构建 `fit_joint/eval_joint`，说明见 [fit](4_potential/fit/README.md)，参数不适用于 V1；`make legacy` 仅构建 `fit_new`。`make all` 构建 V1 和这些拟合工具。单构型与批量使用方法见 [7_spin](7_spin/README.md)。
 
 ## 公共 ansatz 流程
 
