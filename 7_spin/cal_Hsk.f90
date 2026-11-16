@@ -7,12 +7,14 @@ program cal_Hsk
  type(local_projected)::rvr
  type(frozen_model)::bg
  character(4096)::control,rvr_path='',background_path='',coefficient_path='',kpoints_path='',output_prefix=''
+ character(4096)::background_cache_list=''
+ character(4096),allocatable::background_files(:)
  character(64)::background_kind='',model_id
  character(16)::magic
  character(1024)::message
  logical::dump_components=.false.,derivative
  namelist /local_hamiltonian/ rvr_path,background_path,background_kind,coefficient_path, &
- kpoints_path,output_prefix,dump_components
+ kpoints_path,output_prefix,dump_components,background_cache_list
  integer,parameter::max_k_batch=16
  integer(int32)::head(8)
  integer::u,v,w,ios,L,nsite,nd,nk,ik,kz,s,c,first,last
@@ -52,7 +54,7 @@ program cal_Hsk
  enddo
  bias=rvr%alpha;if(derivative) bias=0
  mean=(sum(p(:,1,:)*spread(rvr%means(:rvr%np),2,nsite))+nsite*bias*rvr%means(rvr%np+1))/nsite
- call read_model(trim(background_path),bg)
+ if(len_trim(background_cache_list)==0) call read_model(trim(background_path),bg)
  allocate(h0(nd,nd),hu(nd,nd),h(nd,nd),pg(5,30,0:L-1,0:L-1),projector(10,nd),vp(10,nd),local_u(10,10))
  open(newunit=u,file=trim(kpoints_path),status='old',action='read',iostat=ios)
  call require(ios==0,'Missing k points');read(u,*,iostat=ios) nk
@@ -70,6 +72,17 @@ program cal_Hsk
  enddo
  close(u)
  call require(abs(sum(weights)-1)<1e-10_dp,'k weights must sum to one')
+ if(len_trim(background_cache_list)>0) then
+  allocate(background_files(nk))
+  open(newunit=u,file=trim(background_cache_list),status='old',action='read',iostat=ios)
+  call require(ios==0,'Missing background cache list')
+  do ik=1,nk
+   read(u,'(a)',iostat=ios) background_files(ik)
+   call require(ios==0.and.len_trim(background_files(ik))>0,'Incomplete background cache list')
+  enddo
+  read(u,'(a)',iostat=ios) message
+  call require(ios<0,'Extra background cache entries');close(u)
+ endif
  open(newunit=w,file=trim(output_prefix)//'.index',status='new',action='write')
  write(w,'(a)') 'LANIO2_LOCAL_H_V2 complex128 little_endian Fortran_order eV'
  write(w,*) L,nd,nk,derivative
@@ -173,11 +186,34 @@ contains
  integer,intent(in)::ik
  complex(dp),intent(inout)::hv(:,:)
  complex(dp),intent(in)::hb(:,:)
- integer::i,x,y,s
+ integer::i,x,y,s,cache_fd,cache_ios
+ integer(int32)::cache_shape(2)
+ integer(int64)::cache_bytes
+ character(16)::cache_magic
+ character(64)::cache_model,cache_basis
+ real(dp)::cache_k(3)
  real(dp)::k(3)
  character(32)::tag
  k=points(:,ik)
- call background_projectors(bg,L,k,h0,pg)
+ if(allocated(background_files)) then
+  open(newunit=cache_fd,file=trim(background_files(ik)),status='old',action='read', &
+   access='stream',form='unformatted',convert='little_endian',iostat=cache_ios)
+  call require(cache_ios==0,'Missing cached background')
+  read(cache_fd,iostat=cache_ios) cache_magic,cache_shape,cache_k,cache_model,cache_basis
+  call require(cache_ios==0,'Truncated cached background header')
+  call require(cache_magic=='V1_BG_CACHE_V1  '.and.all(cache_shape==[L,nd]),'Invalid cached background dimensions')
+  call require(cache_model==rvr%model_id.and.cache_basis==rvr%basis_id,'Cached background identity mismatch')
+  call require(all(ieee_is_finite(cache_k)).and.maxval(abs(cache_k-k))<1e-12_dp,'Cached background k mismatch')
+  inquire(unit=cache_fd,size=cache_bytes)
+  call require(cache_bytes==176_int64+16_int64*(int(nd,int64)*nd+int(nsite,int64)*10*nd), &
+   'Cached background byte count mismatch')
+  read(cache_fd,iostat=cache_ios) h0
+  call require(cache_ios==0,'Truncated cached H0')
+  call require(all(ieee_is_finite(real(h0,dp))).and.all(ieee_is_finite(aimag(h0))), 'Nonfinite cached H0')
+  call require(herm_error(h0)<1e-8_dp,'Non-Hermitian cached H0')
+ else
+  call background_projectors(bg,L,k,h0,pg)
+ endif
  if(derivative) h0=0
  hu=0
  do i=1,nd
@@ -185,7 +221,15 @@ contains
  enddo
  do x=0,L-1
  do y=0,L-1
-  s=x*L+y+1;call project_at(L,k,pg,[x,y],projector)
+  s=x*L+y+1
+  if(allocated(background_files)) then
+   read(cache_fd,iostat=cache_ios) projector
+   call require(cache_ios==0,'Truncated cached projector')
+   call require(all(ieee_is_finite(real(projector,dp))).and.all(ieee_is_finite(aimag(projector))), &
+    'Nonfinite cached projector')
+  else
+   call project_at(L,k,pg,[x,y],projector)
+  endif
   local_u=-ueff*n(:,:,s)
   if(.not.derivative) then
    do i=1,10
@@ -195,6 +239,7 @@ contains
   call gemm(local_u,projector,vp);call gemm(projector,vp,hu,ta='C',beta=cmplx(1._dp,0._dp,dp))
  enddo
  enddo
+ if(allocated(background_files)) close(cache_fd)
  h=h0+hv+hb+hu
  errors(ik)=herm_error(h);magnitudes(ik)=maxval(abs(h))
  call require(max(errors(ik),herm_error(hv),herm_error(hb),herm_error(hu))<1e-8_dp, &

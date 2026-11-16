@@ -13,7 +13,7 @@
 │   ├── basis/               # pure_H0.au、bloch.npy 等
 │   ├── wannier/references/
 │   ├── complete_reference/、pseudopotentials/
-│   └── complete_energy/     # 固定补空间密度、重叠检查、切片来源记录
+│   └── complete_energy/     # 固定补空间密度、持久波函数/算符缓存
 └── spins/                   # 构型输入、结果及任务状态
     ├── inputs/Lxx/          # structure.npz、CASE.json
     ├── H_case/              # 单构型 H/dH
@@ -24,7 +24,7 @@
 
 这两个数据目录受 Git 忽略。可将它们链接到外部存储，或在配置中指定外部绝对路径；不要把大型计算数据推送到 GitHub。更换模型、几何、基底或参考密度时使用新的一组目录，不能仅因文件名相同而复用。
 
-节点本地的波函数、重叠变换和 kz 切片仍放在任务临时缓存，避免共享存储重复 I/O；它们属于共用数据，不是构型结果。结构文件含自旋方向，因此整份文件放入 `spins/`。
+完整能量流程的波函数、重叠矩阵及变换、H0 和 projector 持久保存在 `shared/complete_energy/cache/`，不同 spin 共用。结构文件含自旋方向，因此整份文件放入 `spins/`。
 
 ## 单构型 Hamiltonian
 
@@ -110,7 +110,7 @@ export ANSATZ_RUN_CONFIG=/absolute/run/production.json
 完整能量的 `complete_energy` 配置另外需要：
 
 - `work`：随构型变化的完整能量输出目录 `spins/complete_energy/`；每次更换模型、输入、角步或网格使用新目录。
-- `shared_work`：同次计算共用的参考密度、重叠检查等输出目录 `shared/complete_energy/`；更换模型或参考输入时也须使用新目录。
+- `shared_work`：共用的参考密度、波函数、重叠变换及算符缓存目录 `shared/complete_energy/`；更换模型或参考输入时也须使用新目录。
 - `reference_run`：原 2×2 参考包，含 `results/BANDS.npz`、`results/FIELDS.npz`、
   `inputs/reference_actual/DENSITY.bin`。原生铺展回归还读取
   `results/native/reference_actual_ENERGY.dat` 与 `reference_actual_TRUE.bin`。
@@ -191,7 +191,7 @@ QE `make.inc` 和静态库，不能与其他版本的模块文件混编。
 不应把残缺文件当作有效检查点；异常退出后先检查失败阶段及 `FAILURE.json`，
 不要直接复用损坏目录。更换输入、模型、网格或步长时使用新输出目录。
 
-未设置 `spin_work` 的旧配置沿用 `work` 保存构型输出；未设置 `complete_energy.shared_work` 时沿用完整能量的 `work`。已有任务可保留旧配置续算；新任务使用模板中的分离路径。
+未设置 `spin_work` 的旧配置沿用 `work` 保存构型输出；未设置 `complete_energy.shared_work` 时沿用完整能量的 `work`。路径字段仍兼容旧配置，但无身份记录的旧完整能量参考/缓存不能自动采用；启用持久缓存时使用新的共享缓存和完整能量输出目录。
 
 ## 小型检查与原生回归
 
@@ -210,3 +210,52 @@ QE `make.inc` 和静态库，不能与其他版本的模块文件混编。
 
 结果写入 `complete_energy.shared_work/native_check/`，目录须不存在。
 这些检查不替代材料收敛和独立 DFT 精度验证。
+
+## 完整能量的共享缓存
+
+先重新编译 `make local-rvr BUILD=/absolute/build`，在配置中指定
+`complete_energy.shared_work`（推荐 `7_spin/shared/complete_energy`）。运行
+`complete_energy.py 0` 至 `complete_energy.py 7` 时自动准备并复用缓存，不需单独执行缓存命令。
+
+```text
+shared/complete_energy/
+├── INPUTS.json                 # 输入内容及计算代码的身份记录
+├── reference/                  # 固定参考补空间
+└── cache/
+    ├── Lxx/kXXXX/
+    │   ├── wave.npy            # 插值波函数
+    │   ├── overlap.npy         # S
+    │   ├── transform.npy       # S^(-1/2)
+    │   ├── metric.json
+    │   └── CACHE.json
+    ├── Lxx/operators_<k>/
+    │   ├── h0.npy              # 折叠基底 H0
+    │   ├── projectors.npy      # 折叠基底 projector
+    │   ├── native_projectors.npy
+    │   ├── native.bin          # 原生 H 组装用 H0/projector
+    │   └── CACHE.json
+    └── z*/RVR.bin              # 未指定外部切片时生成
+```
+
+首次使用按 L、k 构建；后续 spin 的谱计算复用重叠变换，密度与响应读出复用
+H0/projector，原生 H 组装和转矩收缩也读取对应基底的缓存。H、模型系数、
+本征态、化学势、密度、能量和转矩仍按 spin 重算并保存到 `spins/`。
+单构型 `local_vfunc.py cal_Hsk` 和独立带自由能入口保留原来的直接组装方式。
+
+每次完整能量 worker 启动时计算输入内容 SHA256，绑定模型记录、RVR/基底、
+Bloch 波函数、参考数据、网格、展宽和计算源码；每个缓存包记录 L、k、
+文件集合、长度及 SHA256。校验通过后才进入构型循环，循环内只读复用，
+不按每个 spin 重新计算摘要。输入与缓存必须在任务期间保持不变。
+完整校验会产生共享存储读取开销，不是仅检查文件名。
+
+缓存按条目加文件锁，写到临时目录后整体原子发布。中断留下的
+`*.partial-*` 目录不会被读取，重试会重新生成未发布的条目；确认没有写入
+任务后可删除残留临时目录。正式缓存缺文件、内容损坏或身份不符时会报错，
+不会静默覆盖。损坏条目先归档，再在相同输入下重建；输入或源码改变时用新的
+`shared_work` 和构型输出目录。无 `INPUTS.json` 的旧参考/缓存目录不能直接采用，
+不要手工补写或修改身份记录。
+
+缓存不会在计算完成后自动删除。32 个 k 点的波函数本身约占
+`32 × L² × 57600 × 30 × 16` 字节：L=4/6/8 分别约 14.2/31.9/56.6 GB，
+另需重叠和算符矩阵空间。构建波函数前检查当前可用空间；并发任务仍需预留
+总量。只更换 spin 时复用同一套缓存，无需为每个构型复制。

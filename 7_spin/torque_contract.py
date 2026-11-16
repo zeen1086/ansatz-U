@@ -48,7 +48,8 @@ def projector_density(background: Path,length: int,k: np.ndarray,rho: np.ndarray
 
 def contract_batch(rvr: Path, background: Path, points: np.ndarray, densities: np.ndarray,
                    derivatives: list[dict], workers: int = 1, *,
-                   derivatives_by_point: list[list[dict]] | None = None):
+                   derivatives_by_point: list[list[dict]] | None = None,
+                   projectors_by_point: list[np.ndarray] | None = None):
     """Stream each orbital-pair block once for up to sixteen points at one kz."""
     points = np.asarray(points)
     if points.ndim != 2 or points.shape[1] != 3 or not 1 <= len(points) <= 16:
@@ -66,6 +67,10 @@ def contract_batch(rvr: Path, background: Path, points: np.ndarray, densities: n
     for rho in densities:
         if not np.isfinite(rho).all() or np.max(abs(rho-rho.conj().T)) > 1e-10:
             raise ValueError('Complete Hermitian density matrix required')
+
+    if projectors_by_point is not None:
+        if len(projectors_by_point)!=len(points) or any(a.shape!=(n,10,60*n) or not np.isfinite(a).all() for a in projectors_by_point):
+            raise ValueError('Invalid cached projectors for torque batch')
 
     read_seconds = 0.
     with rvr.open('rb') as f:
@@ -133,8 +138,12 @@ def contract_batch(rvr: Path, background: Path, points: np.ndarray, densities: n
         gamma[:,:,:,0] -= trace_overlap[:,None,None]*means[None,:np_,None]/n
 
     gradients = []
-    for k, rho, sensitivity, point_derivatives in zip(points,densities,gamma,series):
-        projected = projector_density(background,length,k,rho)
+    for slot,(k, rho, sensitivity, point_derivatives) in enumerate(zip(points,densities,gamma,series)):
+        if projectors_by_point is None:
+            projected = projector_density(background,length,k,rho)
+        else:
+            aa=projectors_by_point[slot]
+            projected=np.array([(a@rho)@a.conj().T for a in aa])
         gradients.append(np.array([np.sum(sensitivity*d['p'])-d['Ueff']*np.einsum('sij,sji->',projected,d['N'])
                                    for d in point_derivatives]))
     if any(not np.isfinite(row).all() for row in gradients):raise ValueError('Nonfinite HF gradient')

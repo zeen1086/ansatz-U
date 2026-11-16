@@ -87,7 +87,7 @@ class BackgroundExportTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):export_background(source,r/'pure.au')
 
 
-def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_binary: Path | None=None):
+def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_binary: Path | None=None, shared_cache_checks: bool=False):
     rng = np.random.default_rng(141126)
     with tempfile.TemporaryDirectory(prefix='V1_native_', dir=destination) as tmp:
         r = Path(tmp); model=r/'V_func_tmp';wan=r/'wan';project=r/'rvr'
@@ -182,7 +182,7 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
         np.savetxt(r/'k.dat',q,header=str(len(q)),comments='',fmt='%.17g')
         grid=np.array([[x/2,y/2,z/2] for z in range(2) for y in range(2) for x in range(2)])
         lookup={tuple(row):i for i,row in enumerate(nodes)}
-        errors=[];batch_errors=[]
+        errors=[];batch_errors=[];cache_errors=[]
         for length in (1,2,3):
             cells=np.array(list(product(range(length),repeat=2)));nc=length**2;dim=60*nc
             coeff=rng.normal(size=(nc,ncoef,4))
@@ -197,6 +197,43 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
                     background_kind='pure_H0_no_local_fields_no_HU',coefficient_path=coeffpath,
                     kpoints_path=r/'k.dat',output_prefix=prefix).items())+"\n dump_components=.true.\n/\n")
                 result=call(binary/'cal_Hsk',ctl)
+                if shared_cache_checks:
+                    from unittest.mock import patch
+                    import sys
+                    sys.path.insert(0,str(ROOT/'7_spin'))
+                    import complete_energy as ce
+                    from torque_contract import contract_batch,derivative as read_derivative
+                    old=r/'shared_inputs';(old/'RVR').mkdir(parents=True,exist_ok=True)
+                    put(old/'RVR/PROJECTION.json',dict(basis_id=basis_id))
+                    with patch.object(ce,'OLD',old),patch.object(ce,'SHARED',r/'shared'),patch.dict(ce.CONFIG,model_id=model_id):
+                        op=[ce.cached_operators(length,k[:3],{'fixture':model_id},ce.static(r/'pure.au')) for k in q]
+                    listing=r/f'cache_L{length}.txt';listing.write_text(''.join(str(d/'native.bin')+'\n' for d in op))
+                    cached=r/f'cached_{length}_{int(derivative)}';cached_ctl=cached.with_suffix('.nml')
+                    cached_ctl.write_text(ctl.read_text().replace(str(prefix),str(cached)).replace(' dump_components=',
+                        f" background_cache_list='{listing}',\n dump_components="))
+                    call(binary/'cal_Hsk',cached_ctl)
+                    for ki in range(len(q)):
+                        for suffix in ('h','h0','hv','hb','hu'):
+                            direct=np.fromfile(f'{prefix}.k{ki+1:06}.{suffix}',dtype='<c16')
+                            reused=np.fromfile(f'{cached}.k{ki+1:06}.{suffix}',dtype='<c16')
+                            cache_errors.append(float(np.max(abs(direct-reused))))
+                            assert cache_errors[-1]<2e-10,cache_errors[-1]
+                    if derivative:
+                        d=read_derivative(coeffpath)
+                        for ki,k in enumerate(q):
+                            rho=np.eye(dim)[None]*.2
+                            a=np.load(op[ki]/'native_projectors.npy')
+                            direct,_,_=contract_batch(project/'B_general',r/'pure.au',k[None,:3],rho,[d])
+                            reused,_,_=contract_batch(project/'B_general',r/'pure.au',k[None,:3],rho,[d],projectors_by_point=[a])
+                            np.testing.assert_allclose(reused,direct,atol=2e-10,rtol=0)
+                    if length==1 and not derivative:
+                        payload=(op[0]/'native.bin').read_bytes()
+                        for tag,content in [('truncated',payload[:-1]),('wrong_k',payload[:24]+struct.pack('<d',.99)+payload[32:])]:
+                            (op[0]/'native.bin').write_bytes(content)
+                            badctl=r/f'bad_cache_{tag}.nml'
+                            badctl.write_text(cached_ctl.read_text().replace(str(cached),str(r/tag)))
+                            assert 'Cached background' in call(binary/'cal_Hsk',badctl,ok=False)
+                        (op[0]/'native.bin').write_bytes(payload)
                 if batch_checks:
                     passes=re.findall(r'RVR_KZ_BATCH sector, points, blocks=\s*(\d+)\s+(\d+)\s+(\d+)',result)
                     assert passes==[('1','2','900'),('2','2','900')],passes
@@ -261,6 +298,8 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
             pre_change_rvr_byte_identical=reference_binary is not None,
             scope='synthetic full native chain versus direct periodic real-grid integration',
             actual_material_Hamiltonian_validation=False)
+        if shared_cache_checks:
+            result.update(shared_cache_components=len(cache_errors),shared_cache_max_eV=max(cache_errors))
         if batch_checks:
             result.update(batch_vs_single_components=len(batch_errors),batch_vs_single_max_eV=max(batch_errors),
                           RVR_reads_per_sector=900,interleaved_input_order_preserved=True)
@@ -271,5 +310,6 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--binary',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
     p.add_argument('--reference-binary',type=Path)
+    p.add_argument('--shared-cache-checks',action='store_true')
     args=p.parse_args();args.output.mkdir(parents=True,exist_ok=True)
-    print(json.dumps(run(args.binary,args.output,batch_checks=True,reference_binary=args.reference_binary),indent=2))
+    print(json.dumps(run(args.binary,args.output,batch_checks=True,reference_binary=args.reference_binary,shared_cache_checks=args.shared_cache_checks),indent=2))

@@ -71,3 +71,60 @@ def require_regression() -> None:
 
 def require_calculation(length: int) -> None:
     require_regression()
+
+
+def file_digest(path: Path) -> str:
+    """Hash contents, rejecting a source modified while it is being read."""
+    import hashlib
+    before = path.stat()
+    h = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(8*1024*1024), b''):
+            h.update(chunk)
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+        raise ValueError(f'Input changed during hashing: {path}')
+    return h.hexdigest()
+
+
+def shared_bundle(path: Path, identity: dict, build) -> Path:
+    """Publish an immutable bundle atomically; validate it once per worker startup."""
+    import fcntl
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_name(path.name+'.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if path.exists():
+            try:
+                record = json.loads((path/'CACHE.json').read_text())
+                if record['identity'] != identity:
+                    raise ValueError('input identity mismatch')
+                files = record['files']
+                if not files or set(files) != {p.name for p in path.iterdir() if p.name != 'CACHE.json'}:
+                    raise ValueError('incomplete cache file set')
+                for name, info in files.items():
+                    p = path/name
+                    if p.stat().st_size != info['bytes'] or file_digest(p) != info['sha256']:
+                        raise ValueError(f'corrupt payload: {name}')
+            except (OSError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f'Invalid shared cache {path}: {exc}; use a new shared directory or archive this entry') from exc
+            return path
+        with tempfile.TemporaryDirectory(prefix=path.name+'.partial-', dir=path.parent) as tmp:
+            staging = Path(tmp)/'bundle'
+            staging.mkdir()
+            build(staging)
+            files = {}
+            for p in staging.iterdir():
+                if not p.is_file() or p.name == 'CACHE.json':
+                    raise ValueError('Cache builder must produce only payload files')
+                if p.suffix == '.npy':
+                    a = np.load(p, mmap_mode='r', allow_pickle=False)
+                    for row in a:
+                        if not np.isfinite(row).all():
+                            raise ValueError(f'Nonfinite cache payload: {p.name}')
+                files[p.name] = dict(bytes=p.stat().st_size, sha256=file_digest(p))
+            if not files:
+                raise ValueError('Empty shared cache')
+            save(staging/'CACHE.json', dict(identity=identity, files=files))
+            staging.rename(path)
+        return path

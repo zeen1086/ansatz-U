@@ -41,6 +41,17 @@ class BatchCheckpointTest(unittest.TestCase):
         for index,out in enumerate(self.out):
             np.testing.assert_array_equal(run_material.load_h(out/'H.k000001.h',2),np.eye(2)*self.k[index,0])
 
+    def test_missing_batch_keeps_background_cache_point_order(self):
+        cache=[self.root/'cache0.bin',self.root/'cache1.bin']
+        def native(coeff,k,out,components,**kwargs):
+            self.assertEqual(kwargs['background_files'],[cache[1]])
+            return self.staged(coeff,k,out,components)
+        with patch.object(run_material,'run_native',side_effect=self.staged):
+            run_material.native_batch(self.root/'coeff',self.k[:1],self.out[:1],self.root,2)
+        with patch.object(run_material,'run_native',side_effect=native) as called:
+            run_material.native_batch(self.root/'coeff',self.k,self.out,self.root,2,background_files=cache)
+            self.assertEqual(called.call_count,1)
+
     def test_rejects_incomplete_legacy_directory_and_truncated_new_batch(self):
         self.out[1].mkdir()
         with patch.object(run_material,'run_native',side_effect=self.staged) as native:

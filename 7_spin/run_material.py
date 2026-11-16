@@ -29,11 +29,16 @@ def binding() -> None:
         raise ValueError('RVR identity mismatch')
 
 
-def run_native(coeff: Path, k: np.ndarray, out: Path, components: bool, *, rvr: Path | None=None) -> float:
+def run_native(coeff: Path, k: np.ndarray, out: Path, components: bool, *, rvr: Path | None=None, background_files: list[Path] | None=None) -> float:
     packed=np.column_stack((k[:,:3],np.full(len(k),1/len(k))))
     np.savetxt(out/'k.dat',packed,header=str(len(k)),comments='',fmt='%.17g')
     values=dict(rvr_path=rvr or WORK/'RVR/B_general',background_path=WORK/'basis/pure_H0.au',
                 coefficient_path=coeff,kpoints_path=out/'k.dat',output_prefix=out/'H')
+    if background_files is not None:
+        if len(background_files)!=len(k):raise ValueError('One background cache required per k point')
+        listing=out/'background_cache.txt'
+        listing.write_text(''.join(str(p.resolve())+'\n' for p in background_files))
+        values['background_cache_list']=listing
     lines=['&local_hamiltonian']
     lines += [f" {key}='{str(value.resolve()).replace(chr(39),chr(39)*2)}'," for key,value in values.items()]
     lines += [" background_kind='pure_H0_no_local_fields_no_HU',",
@@ -58,10 +63,12 @@ def native(coeff: Path, k: np.ndarray, out: Path, components: bool=False) -> Pat
 
 
 def native_batch(coeff: Path, k: np.ndarray, directories: list[Path], base: Path,
-                 dimension: int, components: bool=False, *, rvr: Path | None=None) -> None:
+                 dimension: int, components: bool=False, *, rvr: Path | None=None, background_files: list[Path] | None=None) -> None:
     """Assemble one kz group and publish legacy per-point checkpoints atomically."""
     if len(k)!=len(directories) or not 1<=len(k)<=16 or np.ptp(k[:,2])>1e-10:
         raise ValueError('Expected one kz group of up to 16 points and matching output paths')
+    if background_files is not None and len(background_files)!=len(k):
+        raise ValueError('One background cache required per k point')
     missing=[]
     suffixes=['h','h0','hv','hb','hu'] if components else ['h']
     expected=16*dimension**2
@@ -85,7 +92,10 @@ def native_batch(coeff: Path, k: np.ndarray, directories: list[Path], base: Path
         return
     with tempfile.TemporaryDirectory(prefix='.cal_Hsk_batch_',dir=base) as tmp:
         staged=Path(tmp)
-        if rvr is None:
+        if background_files is not None:
+            seconds=run_native(coeff,k[missing],staged,components,rvr=rvr,
+                               background_files=[background_files[i] for i in missing])
+        elif rvr is None:
             seconds=run_native(coeff,k[missing],staged,components)
         else:
             seconds=run_native(coeff,k[missing],staged,components,rvr=rvr)

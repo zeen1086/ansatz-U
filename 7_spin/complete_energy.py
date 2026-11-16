@@ -1,13 +1,13 @@
 """Eight kz workers: frozen V1, Hamiltonian density, native functional, complete adjoint J12."""
 from pathlib import Path
-import os,sys,json,time,subprocess
+import os,sys,json,time,subprocess,struct
 from itertools import product
 import numpy as np
 from scipy.optimize import brentq
 from density_map import NG,ws_weights,fold_unitary,fold_density,fold_project,cells_to_grid,grid_to_cells
 from complete_readout import static,operators,metric,fermi,loewner,hubbard,trace,RY,SIGMA
 from native_input import input_file,write_density,read_density
-from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, require_regression
+from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, require_regression, file_digest, shared_bundle
 from run_material import native_batch, binding
 from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
@@ -40,13 +40,70 @@ def folder(L,case):return R/f'L{L:02}/case_{case:02}'
 def oldcase(L,case):
     source=ENERGY.get('reuse_cases',{}).get(str(L))
     return Path(source)/f'case_{case:02}' if source else R/f'coefficients/L{L:02}/case_{case:02}'
-def stage_bloch(z):
-    cache=Path(os.environ.get('TMPDIR','/tmp'))/f'V1_J12_density_{os.environ["PBS_JOBID"].split(".")[0]}_{z}';cache.mkdir(parents=True,exist_ok=True)
-    src=np.load(OLD/'basis/bloch.npy',mmap_mode='r');slab=np.empty((8,8,NG,30),complex)
-    for x,y in product(range(8),repeat=2):slab[x,y]=src[x,y,z]
-    return cache,slab
+def cache_identity():
+    # Full content hashes, not timestamps: input arrays must stay immutable during a run.
+    files = {'bloch': OLD/'basis/bloch.npy', 'background': OLD/'basis/pure_H0.au',
+             'projection': OLD/'RVR/PROJECTION.json', 'rvr': OLD/'RVR/B_general', 'model': INTERFACE/'V_func_tmp/V_FUNC.json'}
+    for folder, label in [(REF, 'wannier'), (MIN/'results', 'reference_results'),
+                          (MIN/'inputs/reference_actual', 'reference_density')]:
+        for path in sorted(folder.iterdir()):
+            if path.is_file(): files[label+'/'+path.name] = path
+    for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py'):
+        files['code/'+name] = Path(__file__).with_name(name)
+    files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
+    return dict(version=1, files={name:file_digest(path) for name,path in files.items()},
+                model=CONFIG['model_id'], parameters=CONFIG['parameters_sha256'],
+                grid=[40,40,36], orbitals=30, mesh=[2,2,8], sigma=SIGMA)
 
-def reference(z,slab,dv):
+
+def bind_cache(identity):
+    # Old reference checkpoints had no input identity and cannot be safely adopted.
+    import fcntl
+    with (SHARED/'INPUTS.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        path=SHARED/'INPUTS.json'
+        if path.exists():
+            if json.loads(path.read_text()) != identity:
+                raise ValueError('Shared inputs changed; use a new complete_energy.shared_work directory')
+        else:
+            if (SHARED/'reference').exists() or (SHARED/'cache').exists():
+                raise ValueError('Unbound legacy shared cache; use a new shared directory')
+            save(path,identity)
+
+
+def stage_bloch(z):
+    src=np.load(OLD/'basis/bloch.npy',mmap_mode='r')
+    if src.shape != (8,8,8,NG,30) or src.dtype != np.dtype('complex128'):
+        raise ValueError('Unexpected common Bloch grid or dtype')
+    return src[:,:,z]
+
+
+def cached_operators(L,k,identity,st):
+    key='_'.join(float(v).hex() for v in k)
+    path=SHARED/'cache'/f'L{L:02}'/('operators_'+key)
+    def build(out):
+        h0,aa=operators(L,k,*st)
+        G=fold_unitary(L,k)
+        native_h=G.conj().T@h0@G
+        native_a=aa@G
+        np.save(out/'h0.npy',h0);np.save(out/'projectors.npy',aa)
+        np.save(out/'native_projectors.npy',native_a)
+        # Fortran stream: explicit model/basis, dimensions, k, then native-order matrices.
+        basis=json.loads((OLD/'RVR/PROJECTION.json').read_text())['basis_id']
+        with (out/'native.bin').open('wb') as f:
+            f.write(b'V1_BG_CACHE_V1  '.ljust(16))
+            f.write(struct.pack('<2i',L,60*L*L));f.write(np.asarray(k,dtype='<f8').tobytes())
+            f.write(CONFIG['model_id'].encode());f.write(basis.encode())
+            f.write(np.asarray(native_h,dtype='<c16').tobytes(order='F'))
+            for a in native_a:f.write(np.asarray(a,dtype='<c16').tobytes(order='F'))
+    return shared_bundle(path,dict(inputs=identity,L=L,k=list(map(float,k)),kind='operators'),build)
+
+
+def load_operators(path):
+    return np.load(path/'h0.npy',mmap_mode='r'),np.load(path/'projectors.npy',mmap_mode='r')
+
+
+def reference(z,slab,dv,identity,st):
     out=SHARED/'reference';out.mkdir(exist_ok=True)
     if (out/f'z{z}.npz').exists():return
     data=np.load(REF/'data.npz');i0=data['names'].tolist().index('Neel_anchor');mu=np.load(MIN/'results/BANDS.npz')['mu'][1,0]
@@ -58,7 +115,7 @@ def reference(z,slab,dv):
         q=(np.array(list(product(range(2),repeat=2)))+k[:2])/2;psi=np.array([slab[tuple(np.rint(v*8).astype(int)%8)] for v in q])
         if ki==0:
             fields=np.load(MIN/'results/FIELDS.npz')['DFT'][0];nin=np.load(MIN/'results/FIELDS.npz')['NDFT'][0][[0,2,1,3]]
-            h0,aa=operators(2,k,*static(OLD/'basis/pure_H0.au'));_,vu=hubbard(nin)
+            h0,aa=load_operators(cached_operators(2,k,identity,st));_,vu=hubbard(nin)
             reconstructed=h0+fold_project(psi,grid_to_cells(fields,2),2)+sum(aa[j].conj().T@vu[j]@aa[j] for j in range(4))
             from density_map import Projection,indices,spin_matrix
             old=Projection.__new__(Projection);old.ix=indices(data['grid']);old.bits=bits;old.block=30;old.w=np.load(REF/f'wr_{ki+1:04}.npy',mmap_mode='r')
@@ -84,33 +141,43 @@ def background(z,dv):
         np.savez(SHARED/'reference/background.npz',density=full-act,N=nt-n)
     wait(SHARED/'reference/background.npz')
 
-def wave_cache(L,z,cache,slab):
-    paths={};checks=[];cells=np.array(list(product(range(L),repeat=2)))
+def wave_cache(L,z,identity,st,slab):
+    paths={};ops={};checks=[];cells=np.array(list(product(range(L),repeat=2)))
     for ki,k in points(L,z):
-        path=cache/f'L{L}_k{ki}.npy';paths[ki]=path
-        if path.exists():continue
-        psi=np.lib.format.open_memmap(path,mode='w+',dtype=complex,shape=(L*L,NG,30))
-        for j,q in enumerate((cells+k[:2])/L):
-            weights=ws_weights(np.r_[q,z/8])[:,:,z];ix=np.flatnonzero(abs(weights.reshape(-1))>1e-13)
-            if len(ix)==1:psi[j]=slab.reshape(64,NG,30)[ix[0]]*weights.reshape(-1)[ix[0]]
-            else:psi[j]=np.einsum('q,qgo->go',weights.reshape(-1)[ix],slab.reshape(64,NG,30)[ix],optimize=True)
-        psi.flush();S,T,err=metric(psi);np.savez(cache/f'L{L}_k{ki}_metric.npz',T=T,gram_max=err)
-        checks.append(dict(k=ki,gram_max=err))
+        ops[ki]=cached_operators(L,k,identity,st)
+        def build(out):
+            import shutil
+            required=16*(L*L*NG*30+2*(60*L*L)**2)
+            if shutil.disk_usage(out).free < required*1.05:
+                raise OSError(f'Insufficient shared space for L={L}, k={ki}: need at least {required} bytes')
+            source_slab=np.ascontiguousarray(slab).reshape(64,NG,30)
+            psi=np.lib.format.open_memmap(out/'wave.npy',mode='w+',dtype=complex,shape=(L*L,NG,30))
+            for j,q in enumerate((cells+k[:2])/L):
+                weights=ws_weights(np.r_[q,z/8])[:,:,z];ix=np.flatnonzero(abs(weights.reshape(-1))>1e-13)
+                if len(ix)==1:psi[j]=source_slab[ix[0]]*weights.reshape(-1)[ix[0]]
+                else:psi[j]=np.einsum('q,qgo->go',weights.reshape(-1)[ix],source_slab[ix],optimize=True)
+            psi.flush();S,T,err=metric(psi)
+            np.save(out/'overlap.npy',S);np.save(out/'transform.npy',T)
+            save(out/'metric.json',dict(gram_max=err))
+        path=SHARED/'cache'/f'L{L:02}'/f'k{ki:04}'
+        path=shared_bundle(path,dict(inputs=identity,L=L,k=k.tolist(),kind='wave_metric'),build)
+        paths[ki]=path/'wave.npy'
+        checks.append(dict(k=ki,gram_max=json.loads((path/'metric.json').read_text())['gram_max']))
     save(SHARED/f'L{L:02}/metrics/z{z}.json',dict(points=checks))
-    return paths
+    return paths,ops
 
-def spectrum(L,case,z,paths,cache,rvr):
+def spectrum(L,case,z,paths,ops,rvr):
     p=folder(L,case);p.mkdir(parents=True,exist_ok=True)
     definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());sites=definition['angle_configurations'][case]['readout_sites_native_1based'];source=oldcase(L,case)
     batch=points(L,z)
-    native_batch(source/'coeff/value.bin',np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr)
+    native_batch(source/'coeff/value.bin',np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin' for ki,_ in batch])
     for ki,k in batch:
         out=p/f'k_{ki:04}.npz'
         if out.exists():continue
-        G=fold_unitary(L,k);T=np.load(cache/f'L{L}_k{ki}_metric.npz')['T'];err=float(np.load(cache/f'L{L}_k{ki}_metric.npz')['gram_max'])
+        G=fold_unitary(L,k);T=np.load(paths[ki].parent/'transform.npy',mmap_mode='r');err=json.loads((paths[ki].parent/'metric.json').read_text())['gram_max']
         hpath=p/f'H_{ki:04}/H.k000001.h'
         if not hpath.exists():
-            target=p/f'H_{ki:04}';native_batch(source/'coeff/value.bin',k[None],[target],p,60*L*L,rvr=rvr);hpath=target/'H.k000001.h'
+            target=p/f'H_{ki:04}';native_batch(source/'coeff/value.bin',k[None],[target],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin']);hpath=target/'H.k000001.h'
         h=G@load_h(hpath,60*L*L)@G.conj().T
         checkpoint=source/f'k_{ki:04}/eigensystem.npz'
         if err<1e-10 and checkpoint.exists():
@@ -127,12 +194,12 @@ def spectrum(L,case,z,paths,cache,rvr):
         save(p/'MU.json',dict(mu=mu,electrons=target))
     wait(p/'MU.json')
 
-def density_stage(L,case,z,paths,dv,st):
+def density_stage(L,case,z,paths,dv,ops):
     p=folder(L,case);out=p/f'density_z{z}.npz'
     if out.exists():return
     start=time.monotonic();mu=json.loads((p/'MU.json').read_text())['mu'];acc=np.zeros((L*L,NG,4));N=np.zeros((L*L,10,10),complex);bare=0.;F=0.;band=0.;count=0.
     for ki,k in points(L,z):
-        b=np.load(p/f'k_{ki:04}.npz');e,Q=b['e'],b['Q'];f,_,free=fermi(e,mu);P=(Q*f)@Q.conj().T;h0,aa=operators(L,k,*st)
+        b=np.load(p/f'k_{ki:04}.npz');e,Q=b['e'],b['Q'];f,_,free=fermi(e,mu);P=(Q*f)@Q.conj().T;h0,aa=load_operators(ops[ki])
         psi=np.load(paths[ki],mmap_mode='r');acc+=fold_density(psi,P,L)/32/dv
         N+=np.array([a@P@a.conj().T for a in aa])/32;bare+=trace(P,h0)/32;F+=free/32;band+=float(e@f)/32;count+=float(f.sum())/32
         print('DENSITY_POINT',L,case,ki,flush=True)
@@ -157,20 +224,20 @@ def native(L):
         save(p/'ENERGY.json',dict(terms=terms,energy=sum(terms.values()),constant_reference_excluded=True))
     save(out/'COMPLETE.json',dict(done=True))
 
-def potential_stage(L,case,z,paths,st):
+def potential_stage(L,case,z,paths,ops):
     p=folder(L,case);mu=json.loads((p/'MU.json').read_text())['mu'];field=grid_to_cells(read_density(R/f'L{L:02}/native/case_{case:02}_TRUE.bin',L),L)*RY
     nt=np.load(p/'DENSITY.npz')['N'];_,vu=hubbard(nt);numerator=0.;denominator=0.
     for ki,k in points(L,z):
         dest=p/f'adjoint_{ki:04}.npz'
         if dest.exists():
             a=np.load(dest);numerator+=float(a['numerator']);denominator+=float(a['denominator']);continue
-        b=np.load(p/f'k_{ki:04}.npz');e,Q,H=b['e'],b['Q'],b['H'];h0,aa=operators(L,k,*st);psi=np.load(paths[ki],mmap_mode='r')
+        b=np.load(p/f'k_{ki:04}.npz');e,Q,H=b['e'],b['Q'],b['H'];h0,aa=load_operators(ops[ki]);psi=np.load(paths[ki],mmap_mode='r')
         A=H-h0-fold_project(psi,field,L)-sum(a.conj().T@v@a for a,v in zip(aa,vu));ae=Q.conj().T@A@Q;f,fp,_=fermi(e,mu)
         num=float(np.dot(fp,np.diag(ae).real))/32;den=float(fp.sum())/32;np.savez(dest,Ae=ae,numerator=num,denominator=den);numerator+=num;denominator+=den
         print('NATIVE_PROJECTED',L,case,ki,flush=True)
     save(p/f'alpha_z{z}.json',dict(numerator=numerator,denominator=denominator))
 
-def torque_stage(L,z,rvr):
+def torque_stage(L,z,rvr,ops):
     definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());targets=[v['site_native_1based'] for v in definition['selected_shells'][0]['pairs']]
     for chunk in [list(range(0,4)),list(range(4,8)),list(range(8,11))]:
         entries=[];densities=[];ds=[]
@@ -184,7 +251,7 @@ def torque_stage(L,z,rvr):
                 b=np.load(p/f'k_{ki:04}.npz');e,Q=b['e'],b['Q'];ae=np.load(p/f'adjoint_{ki:04}.npz')['Ae'];ae.flat[::len(e)+1]-=alpha;f,fp,_=fermi(e,mu);Z=Q@(loewner(e,f,fp)*ae)@Q.conj().T;G=fold_unitary(L,k)
                 densities.append(-G.conj().T@Z@G);entries.append((case,ki,k,dest,sites));ds.append(derivs)
         if entries:
-            vals,im,stats=contract_batch(rvr,OLD/'basis/pure_H0.au',np.array([a[2] for a in entries]),np.array(densities),ds[0],workers=1,derivatives_by_point=ds)
+            vals,im,stats=contract_batch(rvr,OLD/'basis/pure_H0.au',np.array([a[2] for a in entries]),np.array(densities),ds[0],workers=1,derivatives_by_point=ds,projectors_by_point=[np.load(ops[a[1]]/'native_projectors.npy',mmap_mode='r') for a in entries])
             for row,v,imag in zip(entries,vals,im):np.savez(row[3],torque=v,sites=row[4],imaginary=imag)
             save(R/f'L{L:02}/torque_batch_{z}_{chunk[0]}.json',stats)
 
@@ -228,28 +295,33 @@ def main(z):
         raise ValueError('Require kz worker 0..7 and distinct sizes from 4,6,8')
     R.mkdir(parents=True,exist_ok=True)
     SHARED.mkdir(parents=True,exist_ok=True)
+    identity=cache_identity();bind_cache(identity)
     for L in SIZES:
         if str(L) not in ENERGY.get('reuse_cases',{}):prepare_coefficients(L,z)
     meta=json.loads((INTERFACE/'V_func_tmp/V_FUNC.json').read_text());dv=abs(np.linalg.det(np.array(meta['primitive_cell_A'])/.529177210903))/NG
-    cache,slab=stage_bloch(z);st=static(OLD/'basis/pure_H0.au');reference(z,slab,dv);background(z,dv)
+    slab=stage_bloch(z);st=static(OLD/'basis/pure_H0.au');reference(z,slab,dv,identity,st);background(z,dv)
     cached=CONFIG.get('rvr_slices',{}).get(str(z))
-    rvr=Path(cached) if cached else cache/'RVR.bin'
-    if not rvr.exists():stage_slice(OLD/'RVR/B_general',rvr,z)
+    if cached:
+        rvr=Path(cached)
+    else:
+        cache=shared_bundle(SHARED/'cache'/f'z{z}',dict(inputs=identity,kz=z/8,kind='rvr_slice'),
+                            lambda out:stage_slice(OLD/'RVR/B_general',out/'RVR.bin',z))
+        rvr=cache/'RVR.bin'
     prefix,sectors,_,size=layout(rvr)
     original,_,_,full_size=layout(OLD/'RVR/B_general')
     if sectors!=(z/8,) or size!=full_size or prefix[:32]!=original[:32] or prefix[36:]!=original[36:]:
         raise ValueError('Cached RVR does not match the full source and kz')
     save(SHARED/f'reused_RVR_z{z}.json',dict(path=str(rvr),bytes=size))
     for L in SIZES:
-        paths=wave_cache(L,z,cache,slab)
+        paths,ops=wave_cache(L,z,identity,st,slab)
         for case in range(11):
-            spectrum(L,case,z,paths,cache,rvr);density_stage(L,case,z,paths,dv,st);barrier(f'density_L{L}_c{case}',z)
+            spectrum(L,case,z,paths,ops,rvr);density_stage(L,case,z,paths,dv,ops);barrier(f'density_L{L}_c{case}',z)
             if z==0:assemble_density(L,case,dv)
         barrier(f'all_density_L{L}',z)
         if z==0:native(L)
         wait(R/f'L{L:02}/native/COMPLETE.json')
-        for case in range(11):potential_stage(L,case,z,paths,st)
-        barrier(f'potentials_L{L}',z);torque_stage(L,z,rvr);barrier(f'torques_L{L}',z)
+        for case in range(11):potential_stage(L,case,z,paths,ops)
+        barrier(f'potentials_L{L}',z);torque_stage(L,z,rvr,ops);barrier(f'torques_L{L}',z)
         if z==0:collect(L)
     if z==0:save(R/'COMPLETE.json',dict(V1_files_verified=frozen(),sizes=SIZES,J='J12 only'))
 
