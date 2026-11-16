@@ -16,7 +16,7 @@ from fortran_io import write_record, read_array
 class WannierPipelineTests(unittest.TestCase):
     @unittest.skipUnless((shutil.which("mpifort") or shutil.which("mpiifort")) and shutil.which("mpirun"),
                          "MPI compiler and mpirun are unavailable")
-    def test_mpi_wannier_normalization_and_rvr(self):
+    def test_mpi_wannier_normalization_and_band(self):
         compiler=shutil.which("mpiifort") or shutil.which("mpifort")
         flags=(["-O0","-check","bounds","-mkl"] if "mpiifort" in compiler else
                ["-O0","-fcheck=all","-ffree-line-length-none","-fallow-argument-mismatch"])
@@ -39,13 +39,8 @@ class WannierPipelineTests(unittest.TestCase):
              with (wan/'WFN'/f'wfn_k1_b{band}_vec_dp').open('wb') as stream:write_record(stream,np.array(wave,dtype='<c16'))
             with (pot/'R_vec').open('wb') as stream:
              write_record(stream,np.array([2],dtype='<i4'));write_record(stream,np.array([[1,0,0],[0,0,0]],dtype='<i4'))
-            field=np.zeros((2,3,1,3),dtype='<f8',order='F');field[:,0,0,0]=[.3,.5];field[:,1,0,0]=[.4,.8];field[:,2,0,0]=[.7,.9]
-            with (pot/'V_func_tmp').open('wb') as stream:
-             for _ in range(3):write_record(stream,b'')
-             write_record(stream,field)
             env=dict(os.environ,MKL_NUM_THREADS='1',OMP_NUM_THREADS='1',I_MPI_PIN='0')
-            for name,sources in [('dis',['5_wannier/disentangled/make_dis_mpi.f90']),('wan',['5_wannier/make_wan/make_wan_fun_mpi.f90']),
-                                 ('rvr',['6_RVR/speedup/rvr_kernel_mod.f90','6_RVR/speedup/cal_RVR_zgemm.f90'])]:
+            for name,sources in [('dis',['5_wannier/disentangled/make_dis_mpi.f90']),('wan',['5_wannier/make_wan/make_wan_fun_mpi.f90'])]:
              cmd=[compiler]+flags+[str(w/'parameter_mod.f90')]+[str(r/s) for s in sources]+['-o',str(w/name)]+([] if 'mpiifort' in compiler else shlex.split(os.environ.get('LIBS', DEFAULT_LIBS)))
              subprocess.run(cmd,cwd=w,check=True)
             subprocess.run(['mpirun','-np','2',str(w/'dis')],cwd=wan/'disentangled',env=env,check=True,timeout=30)
@@ -55,19 +50,8 @@ class WannierPipelineTests(unittest.TestCase):
             np.testing.assert_allclose(a,expected,atol=1e-14,rtol=0)
             spec=importlib.util.spec_from_file_location('prepare_rvr',r/'5_wannier/make_wan/prepare_rvr.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
             m.prepare(wan/'make_wan',wan/'make_wan/converted',p)
-            # Install only the freshly generated files within this fixture.
-            shutil.copytree(wan/'make_wan/converted/wan_data',wan/'make_wan/wan_data')
-            shutil.copyfile(wan/'make_wan/converted/cal_TF_1',wan/'make_wan/cal_TF_1')
-            (w/'tmp').mkdir()
-            subprocess.run(['mpirun','-np','2',str(w/'rvr'),'1'],cwd=w,env=env,check=True,timeout=30)
-            with (w/'tmp/B_general_1').open('rb') as stream:row=read_array(stream,'<c16',(3,1,2))
-            # R_vec permutes both the field and Wannier samples: norm remains 1.
-            np.testing.assert_allclose(row[0,0,:],[.8,.4-.6j],atol=1e-13,rtol=0)
-            subprocess.run(['mpirun','-np','2',str(w/'rvr'),'2'],cwd=w,env=env,check=True,timeout=30)
-            with (w/'tmp/B_general_2').open('rb') as stream: second=read_array(stream,'<c16',(3,1,2))
-            np.testing.assert_allclose(second[0,0,:],[.4+.6j,-.8],atol=1e-13,rtol=0)
-            with (w/'tmp/B_general_1').open('rb') as stream: first=read_array(stream,'<c16',(3,1,2))
-            np.testing.assert_array_equal(first,row)
+            converted=np.fromfile(wan/'make_wan/converted/wan_data/wan_1',dtype='<c16').reshape((1,2,1),order='F')
+            np.testing.assert_allclose(converted,a[:,[1,0],:],atol=1e-14,rtol=0)
             self.assertAlmostEqual(float(np.sum(abs(a)**2)),1.0,places=13)
             # Check the real band entry point with one and two MPI ranks.
             (w/'super').mkdir();(w/'tot_HR').mkdir()

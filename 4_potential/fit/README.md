@@ -83,4 +83,4 @@ N/VU及其导数各保留两个 `(10,10,4)` complex128记录，包含全部轨�
 
 本入口完成 DFT标签→三势拟合→势和解析导数求值。
 新版 `V_func_tmp` **不兼容**旧五记录同名文件或局域 `.au` 格式，不能作为旧 `fit_new` 的重启输入。
-后续使用 [新版RVR与完整Hamiltonian入口](../../6_RVR/joint/README.md)：`cal_RVR_split/combine` 分别投影标量8、B40和实际固定标量参考场；`ansatzU` 读取新版 `B_general`，输出标量/B/U及总转矩和Φ。原单Ni三系数RVR仍保留，但不能直接吞入40组特征；新旧同名文件由格式头区分。
+该 scalar8/B40 拟合与网格求值入口继续保留；其专用 `joint` RVR 和 `ansatzU` 后端已于 2026-11-16 退役。当前 [V1 RVR](../../6_RVR/README.md)读取冻结局域核与反馈模型，不接收此处生成的参数。旧后端可从 [清理前版本](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1/6_RVR/joint) 查阅。

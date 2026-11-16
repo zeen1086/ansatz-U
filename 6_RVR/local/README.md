@@ -1,6 +1,6 @@
 # 冻结 V1 → V_func_tmp → cal_RVR_split → cal_Hsk
 
-这是第30轮局域核、v/B/完整N读出与反馈模型的正式接口。模型包采用 `LANIO2_LOCAL_VFUNC_V2`，原生投影和组装采用 `LANIO2_LRVR_V2`。它与旧五记录文件、scalar8/B40联合文件分别保留，调用本目录的 `local/` 程序，不把新包交给旧格式读取器。
+这是第30轮局域核、v/B/完整N读出与反馈模型的正式接口。模型包采用 `LANIO2_LOCAL_VFUNC_V2`，原生投影和组装采用 `LANIO2_LRVR_V2`。本目录只提供当前 V1 的 `local/` 程序；旧五记录和 scalar8/B40 RVR 接口已退役，依赖与历史入口见 [目录说明](../README.md)。
 
 当前本机正式模型入口：
 

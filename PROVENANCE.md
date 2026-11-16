@@ -1,10 +1,12 @@
 # 来源
 
+2026-11-16：`6_RVR` 已收敛到当前 V1。下列旧三分量、scalar8/B40 和刚性 N0 入口的来源记录对应 [清理前版本 3e1307a](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1)，不是当前可执行接口。当前文件和依赖见 [6_RVR](6_RVR/README.md)；`background_projectors`、`project_at` 从旧 `local_ansatz` 原样移入 `frozen_io`，`.au` 格式和校验保持兼容。
+
 公共工具来自 [zeen1086/ansatz](https://github.com/zeen1086/ansatz)，commit `05fa36cbf6fb7740bd55293466e79fa13af545c7`。保留QE修改、Wannier、RVR及构建工具；材料专用拟合、对称投影和自旋通道分支已删除，输入模板改用原LaNiO₂结构与投影。QE许可证保留在 `0_QE/License`。
 
 LaNiO₂ 分支来源对应：
 
-| 原工作树文件 | 当前文件 |
+| 原工作树文件 | 历史导入位置 |
 |---|---|
 | `fit/fit_new.f90` | `4_potential/fit/fit_new.f90`、`fit_mask.f90` |
 | `1_make_RVR/cal_RVR_split.f90` | `6_RVR/cal_RVR_split_lanio2.f90` |

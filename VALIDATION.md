@@ -1,5 +1,7 @@
 # 验证摘要
 
+下列旧局域、张量和 `joint` RVR 表格是历史验证记录，对应 [清理前代码](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1)。这些旧运行入口已于 2026-11-16 退役，表中的“当前入口”和 `make all` 指当时版本。当前 V1 的清理回归见 [6_RVR](6_RVR/README.md)，生产读出测试见 [production](7_spin/production/README.md)。
+
 | 检查 | 结果 |
 |---|---|
 | LaNiO₂源码干净构建、对角/全分量拟合与重启、原阶段合并 | 通过 |

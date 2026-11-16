@@ -31,17 +31,11 @@ def locations(source: Path) -> tuple[Path, Path]:
 def dependencies(source: Path) -> list[Path]:
     if source.parent.name == 'local' and source.name in ('cal_RVR_split.f90', 'combine.f90', 'cal_Hsk.f90'):
         return [ROOT / name for name in ('common/numerics.f90', '6_RVR/frozen_io.f90',
-                '6_RVR/tensor_rvr.f90', '7_spin/local_ansatz.f90', '4_potential/fit/joint_npy.f90',
+                '4_potential/fit/joint_npy.f90',
                 '6_RVR/local_vfunc.f90', '6_RVR/local_rvr.f90')] + [source]
     if source.name == "fit_new.f90":
         return [ROOT / "4_potential/fit/fit_mask.f90", source]
-    if source.name == "run_ansatzU.f90":
-        return [ROOT / name for name in ("common/numerics.f90", "6_RVR/frozen_io.f90",
-                "6_RVR/tensor_rvr.f90", "7_spin/local_ansatz.f90")] + [source]
-    result = []
-    if source.stem in ("cal_RVR_zgemm", "test_rvr_kernel"):
-        result.append(ROOT / "6_RVR/speedup/rvr_kernel_mod.f90")
-    return result + [source]
+    return [source]
 
 
 def digest(path: Path) -> str:

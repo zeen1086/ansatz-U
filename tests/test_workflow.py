@@ -6,7 +6,6 @@ import io
 import json
 import os
 import shutil
-import shlex
 import struct
 import subprocess
 import tempfile
@@ -14,10 +13,10 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
-from build import DEFAULT_LIBS, build, locations, verify
+from build import build, verify
 from configure import configure
 from fortran_io import read_array, read_record, write_record
-from parameters import ROOT, fortran_module, load
+from parameters import ROOT, load
 
 
 def module(name, relative):
@@ -134,47 +133,6 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(binary.read_bytes(),original)
                 with self.assertRaises(RuntimeError): verify(source)
 
-    @unittest.skipUnless(shutil.which("gfortran"),"gfortran is unavailable")
-    def test_fortran_spin_and_rvr_known_answers(self):
-        with tempfile.TemporaryDirectory() as directory:
-            work=Path(directory)
-            (work/"parameter_mod.f90").write_text(fortran_module(load()))
-            for test, dependency in (("test_rvr_kernel","6_RVR/speedup/rvr_kernel_mod.f90"),):
-                command=["gfortran","-O2","-fcheck=all",str(work/"parameter_mod.f90"),str(ROOT/dependency),
-                         str(ROOT/f"tests/{test}.f90"),"-o",str(work/test)] + shlex.split(os.environ.get("LIBS", DEFAULT_LIBS))
-                subprocess.run(command,cwd=work,check=True,capture_output=True)
-                run=subprocess.run([str(work/test)],cwd=work,check=True,capture_output=True,text=True)
-                self.assertIn("PASS",run.stdout)
-
-    @unittest.skipUnless(shutil.which("gfortran"),"gfortran is unavailable")
-    def test_hamiltonian_supercell_fold(self):
-        with tempfile.TemporaryDirectory() as directory:
-            work=Path(directory)
-            primitive=work/"primitive"; primitive.mkdir()
-            folded=work/"super"; folded.mkdir()
-            vectors=np.array([[-1,0,0],[0,0,0],[1,0,0]])
-            np.savetxt(primitive/"ir_vec_HYC",vectors,fmt="%8d%8d%8d")
-            np.savetxt(primitive/"H_deg_HYC",[[1,2],[2,1],[3,2]],fmt="%8d%8d")
-            matrix=np.array([[1,2+1j],[2-1j,3]],dtype="<c16")
-            for row in range(3):
-                with (primitive/f"hr_HYC_{row+1}").open("wb") as stream:
-                    write_record(stream,matrix*(row+1))
-            p=load(); p.update(nwan=2,wan_max=2,nscf_dir=str(primitive),super_h_dir=str(folded),
-                               period_x=2,period_y=1,period_z=1)
-            (work/"parameter_mod.f90").write_text(fortran_module(p))
-            subprocess.run(["gfortran","-fcheck=all",str(work/"parameter_mod.f90"),str(ROOT/"6_RVR/rearrange_HR.f90"),
-                            "-o",str(work/"fold")],cwd=work,check=True,capture_output=True)
-            subprocess.run([str(work/"fold")],cwd=work,check=True,capture_output=True)
-            output_vectors=np.loadtxt(folded/"ir_vec_HYC",dtype=int).reshape((-1,3))
-            for block, vector in enumerate(output_vectors):
-                expected=np.zeros((4,4),dtype=complex)
-                for cell in range(2):
-                    for row, displacement in enumerate((-1,0,1)):
-                        target=cell+displacement
-                        if target//2 != vector[0]: continue
-                        expected[2*cell:2*cell+2,2*(target%2):2*(target%2)+2]=matrix*(row+1)/[2,1,2][row]
-                with (folded/f"hr_HYC_{block+1}").open("rb") as stream:
-                    np.testing.assert_array_equal(read_array(stream,"<c16",(4,4)),expected)
     @unittest.skipUnless(shutil.which("gfortran"),"gfortran is unavailable")
     def test_qe_wavefunction_export_padding(self):
         source=(ROOT/"0_QE/common/PP/src/wfck2r.f90").read_text()

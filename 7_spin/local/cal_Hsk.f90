@@ -1,6 +1,6 @@
 program cal_Hsk
  use local_rvr, only: local_projected,open_projected,projected_block
- use local_ansatz, only: frozen_model,read_model,background_projectors,project_at
+ use frozen_io, only: frozen_model,read_model,background_projectors,project_at
  use numerics
  !$ use omp_lib, only: omp_get_max_threads
  implicit none
