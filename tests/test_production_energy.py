@@ -72,6 +72,70 @@ class ProductionEnergyTest(unittest.TestCase):
         complete_readout.full_functional_selfcheck()
         summarize_energy.selfcheck()
 
+    def test_complete_spectrum_is_invariant_under_a_scalar_gauge_shift(self):
+        import complete_energy
+        from common import chemical_potential
+
+        length, k = 2, np.array([.5, 0., .125])
+        cells = length**2
+        dimension = 60*cells
+        eye = np.eye(dimension)
+        wave = np.diag(np.linspace(.97, 1.03, 30)).astype(complex)
+        wave[0, 1] = .03j
+        psi = np.array([(1.+.01*i)*wave for i in range(cells)])
+        overlap, transform, gram_max = complete_readout.metric(psi)
+        base = np.diag(np.linspace(-1., 1., dimension))
+
+        def assemble(coeff, _, directories, *args, **kwargs):
+            # cal_Hsk adds the coefficient offset to the native diagonal.
+            offset = struct.unpack_from('<d', coeff.read_bytes(), 120)[0]
+            directories[0].mkdir()
+            np.asarray(base+offset*eye, dtype='<c16').ravel(order='F').tofile(
+                directories[0]/'H.k000001.h')
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root/'inputs'/f'L{length:02}'
+            inputs.mkdir(parents=True)
+            case = {'readout_sites_native_1based': [1]}
+            (inputs/'CASE.json').write_text(json.dumps({'angle_configurations': [case, case]}))
+            np.save(root/'transform.npy', transform)
+            np.save(root/'overlap.npy', overlap)
+            (root/'metric.json').write_text(json.dumps({'gram_max': gram_max}))
+            observations = []
+            with patch.multiple(complete_energy, ROOT=root, R=root/'output', ENERGY={},
+                                points=lambda *_: [(1, k)], native_batch=assemble,
+                                barrier=lambda *_: None):
+                for case_index, offset in enumerate((-.7, .3)):
+                    coeff = complete_energy.oldcase(length, case_index)/'coeff'/'value.bin'
+                    coeff.parent.mkdir(parents=True)
+                    coeff.write_bytes(struct.pack('<16s8i64s2d', b'LANIO2_COEFF_V2 ',
+                        1, 1, length, cells, 0, 0, 0, 0, complete_energy.CONFIG['model_id'].encode(),
+                        1., offset) + bytes(cells*(4*8 + 100*16)))
+                    complete_energy.spectrum(length, case_index, 1, {1: root/'wave.npy'}, {1: root}, root/'rvr')
+                    with np.load(complete_energy.folder(length, case_index)/'k_0001.npz') as data:
+                        e, Q, H = data['e'], data['Q'], data['H']
+                    mu = chemical_potential(e[None], np.ones(1), 21*cells)
+                    f = complete_readout.fermi(e, mu)[0]
+                    rho = density_map.fold_density(psi, (Q*f)@Q.conj().T, length)
+                    observations.append((H, e, mu, f, rho))
+        before, after = observations
+        for name, a, b, shift in zip(('H', 'e', 'mu', 'occupations', 'density'),
+                                     before, after, (overlap, 1., 1., 0., 0.)):
+            with self.subTest(quantity=name):
+                np.testing.assert_allclose(b-a, shift, atol=1e-12, rtol=0)
+
+    def test_complete_energy_rejects_unbound_result_with_unknown_gauge(self):
+        import complete_energy
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case = root/'L06/case_00'
+            case.mkdir(parents=True)
+            np.savez(case/'k_0000.npz', H=np.eye(1))
+            with patch.multiple(complete_energy, R=root, SIZES=[6], compute_node=lambda: None):
+                with self.assertRaisesRegex(ValueError, 'unknown energy gauge'):
+                    complete_energy.main(0)
+
     def test_gaussian_free_energy_fixed_number_gradient(self):
         import common
         self.assertEqual(common.SIGMA, complete_readout.SIGMA)

@@ -213,23 +213,44 @@ def wave_cache(L,z,identity,st,slab):
     save(SHARED/f'L{L:02}/metrics/z{z}.json',dict(points=checks))
     return paths,ops
 
+def value_offset(path: Path, length: int) -> float:
+    with path.open('rb') as stream:
+        header = stream.read(128)
+    if len(header) != 128:
+        raise ValueError(f'Truncated coefficient header: {path}')
+    magic, *fields, model_id, _, offset = struct.unpack('<16s8i64s2d', header)
+    version, ncoeff, cell, sites, derivative = fields[:5]
+    if (magic != b'LANIO2_COEFF_V2 ' or version != 1 or ncoeff < 1 or cell != length
+            or sites != length**2 or derivative != 0 or model_id != CONFIG['model_id'].encode()
+            or not np.isfinite(offset)):
+        raise ValueError(f'Invalid value coefficient header: {path}')
+    return offset
+
+
 def spectrum(L,case,z,paths,ops,rvr):
     p=folder(L,case);p.mkdir(parents=True,exist_ok=True)
     definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());sites=definition['angle_configurations'][case]['readout_sites_native_1based'];source=oldcase(L,case)
     batch=points(L,z)
-    native_batch(source/'coeff/value.bin',np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin' for ki,_ in batch])
+    coeff=source/'coeff/value.bin';offset=value_offset(coeff,L)
+    native_batch(coeff,np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin' for ki,_ in batch])
     for ki,k in batch:
         out=p/f'k_{ki:04}.npz'
         if valid_npz(out,{'e':(60*L*L,),'Q':(60*L*L,60*L*L),'H':(60*L*L,60*L*L)}):continue
         G=fold_unitary(L,k);T=np.load(paths[ki].parent/'transform.npy',mmap_mode='r');err=json.loads((paths[ki].parent/'metric.json').read_text())['gram_max']
+        S=np.load(paths[ki].parent/'overlap.npy',mmap_mode='r')
         hpath=p/f'H_{ki:04}/H.k000001.h'
         if not hpath.exists():
-            target=p/f'H_{ki:04}';native_batch(source/'coeff/value.bin',k[None],[target],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin']);hpath=target/'H.k000001.h'
+            target=p/f'H_{ki:04}';native_batch(coeff,k[None],[target],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin']);hpath=target/'H.k000001.h'
         h=G@load_h(hpath,60*L*L)@G.conj().T
+        # Replace the native cI with the scalar operator cS in the folded basis.
+        if offset:
+            h+=offset*S
+            h.flat[::len(h)+1]-=offset
         checkpoint=source/f'k_{ki:04}/eigensystem.npz'
         if err<1e-10 and valid_npz(checkpoint,{'e':(60*L*L,),'v':(60*L*L,60*L*L)}):
-            b=np.load(checkpoint);e=b['e'];Q=G@b['v']
-            if Q.shape!=h.shape or e.shape!=(len(h),) or np.max(abs(h@Q-Q*e))>=1e-8:
+            with np.load(checkpoint) as b:
+                e=b['e'];Q=T@(G@b['v'])
+            if np.max(abs(h@Q-(S@Q)*e))>=1e-8:
                 e,u=np.linalg.eigh(T@h@T);Q=T@u
         else:
             e,u=np.linalg.eigh(T@h@T);Q=T@u
@@ -373,6 +394,9 @@ def main(z):
     compute_node()
     if not 0<=z<8 or not SIZES or len(set(SIZES))!=len(SIZES) or any(L not in (4,6,8) for L in SIZES):
         raise ValueError('Require kz worker 0..7 and distinct sizes from 4,6,8')
+    if not (R/'INPUTS.json').is_file() and any(
+            path.is_file() for L in SIZES for path in (R/f'L{L:02}').glob('case_*/*')):
+        raise ValueError(f'Unbound complete-energy checkpoints have unknown energy gauge: {R}; use a new work directory')
     R.mkdir(parents=True,exist_ok=True)
     SHARED.mkdir(parents=True,exist_ok=True)
     start_attempt(z)
