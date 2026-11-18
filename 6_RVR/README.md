@@ -1,17 +1,17 @@
-# V1 RVR 使用说明
+# V1 RVR Usage Guide
 
-在仓库根目录执行以下命令。将示例中的绝对路径替换为实际路径，`ANSATZ_PYTHON` 指向已安装 NumPy、SciPy 的 Python 环境。模型、构建和计算输出放在仓库外。
+Run the following commands from the repository root. Replace example absolute paths with real paths; `ANSATZ_PYTHON` must point to an existing Python environment with NumPy and SciPy. Keep models, builds, and calculation outputs outside the repository.
 
-## 1. 编译与模型准备
+## 1. Build and Prepare the Model
 
 ```sh
 export ANSATZ_PYTHON=/absolute/existing/python
 make local-rvr BUILD=/absolute/build
 ```
 
-生成 `/absolute/build/local/rvr` 和 `/absolute/build/local/cal_Hsk`。
+This produces `/absolute/build/local/rvr` and `/absolute/build/local/cal_Hsk`.
 
-已有导出模型和纯 H0 背景时可跳过下面两步；否则执行：
+Skip the following two steps if an exported model and pure H0 background already exist:
 
 ```sh
 "$ANSATZ_PYTHON" local_vfunc.py export \
@@ -26,11 +26,11 @@ make local-rvr BUILD=/absolute/build
   --output /absolute/basis/pure_H0.au
 ```
 
-上述标量常数用于当前冻结 V1。导出结构为原始四 Ni 几何；结构 NPZ 包含 `cell, positions, species, ni, spins`，分别使用 Å、原子序数、零基 Ni 索引和单位自旋方向。背景输入须为兼容的 DFT-only `primitive.bin`，与投影 Wannier 使用共同基底。
+The scalar constant above applies to the current frozen V1. Export with the original four-Ni geometry. The structure NPZ contains `cell, positions, species, ni, spins`: geometry in Å, atomic numbers, zero-based Ni indices, and unit spin directions. The background must be a compatible DFT-only `primitive.bin` in the same basis as the projected Wannier functions.
 
-## 2. 准备投影输入
+## 2. Prepare Projection Inputs
 
-需要 `wan_1 ... wan_30`：little-endian complex128 流文件，按 Fortran 顺序排列为 `(n_translation, n_grid)`，网格与模型一致。`weighted_translations.dat` 首行为平移数，随后每行 `Rx Ry Rz weight`。
+Provide `wan_1 ... wan_30`: little-endian complex128 stream files in Fortran order with shape `(n_translation, n_grid)`, on the same grid as the model. The first line of `weighted_translations.dat` is the translation count; each subsequent line is `Rx Ry Rz weight`.
 
 ```sh
 "$ANSATZ_PYTHON" local_vfunc.py prepare-projection \
@@ -43,9 +43,9 @@ make local-rvr BUILD=/absolute/build
   --output /absolute/RVR
 ```
 
-`--grid-weight 1` 适用于既有离散归一化来源；其他来源须填写实际积分权重。程序不会自动裁切 Wannier 支持、补边界权重或重新归一化。输出目录须为新目录。
+`--grid-weight 1` applies to the existing discretely normalized inputs; other sources require their actual integration weight. The program does not automatically truncate Wannier support, add boundary weights, or renormalize. Use a new output directory.
 
-## 3. 计算、续算与输出
+## 3. Compute, Resume, and Read Outputs
 
 ```sh
 /absolute/build/local/rvr prepare /absolute/RVR/projection.nml
@@ -53,37 +53,37 @@ make local-rvr BUILD=/absolute/build
 /absolute/build/local/rvr combine /absolute/RVR/projection.nml
 ```
 
-`prepare` 生成共享空间场缓存；`project` 计算轨道/kz 分片；`combine` 合并为可复用的 `B_general`。可指定分片任务，轨道和 kz 均为 1 基编号：
+`prepare` creates the shared spatial-field cache; `project` computes orbital/kz shards; `combine` merges them into reusable `B_general`. Shard tasks can be selected using one-based orbital and kz indices:
 
 ```sh
-# 第 1 个轨道的全部 kz
+# All kz values for orbital 1
 /absolute/build/local/rvr project /absolute/RVR/projection.nml 1
-# 第 1 个轨道的第 3 个 kz
+# kz index 3 for orbital 1
 /absolute/build/local/rvr project /absolute/RVR/projection.nml 1 3
-# 调试时保留中间文件
+# Retain intermediate files for debugging
 /absolute/build/local/rvr combine /absolute/RVR/projection.nml --keep-intermediates
 ```
 
-可以并行运行不同轨道/kz 任务，但每个文件只允许一个写入进程；全部投影完成后再合并。不要用 `mpirun` 启动多份写同一分片的进程。
+Different orbital/kz tasks may run concurrently, with only one writer per file. Combine after all projections finish. Do not use `mpirun` to launch multiple processes writing the same shard.
 
-中断后重跑相同命令：空间缓存检查头部与均值后复用，分片检查头部/字节数并抽检首尾块后复用，缺失分片补算，未完成的 `.partial` 从头生成。检测到格式/字节数错误、首尾块非有限值或身份不符时会报错；先将异常文件移到其他目录，再重试。最终文件已发布但清理中断时，重跑 `combine` 可继续清理。
+After interruption, rerun the same commands. Spatial caches are reused after header and mean checks; shards are reused after header/byte-count checks and first/last-block sampling. Missing shards are computed, and unfinished `.partial` files are regenerated from scratch. Format/byte-count errors, nonfinite first/last blocks, or identity mismatches raise errors; move the affected files elsewhere before retrying. If the final file was published but cleanup was interrupted, rerunning `combine` resumes cleanup.
 
-续算期间保持模型、几何、Wannier、平移/权重及准备记录不变；输入变化时使用新的输出目录重新准备投影。
+Keep the model, geometry, Wannier functions, translations/weights, and preparation records unchanged during restart. If inputs change, prepare the projection again in a new output directory.
 
-默认仅在合并成功后清理缓存和分片，失败时保留现场。最终目录包含：
+By default, caches and shards are removed only after successful combination; failures retain intermediate files. The final directory contains:
 
 ```text
-B_general          # 可复用矩阵元
-PROJECTION.json    # 输入来源与准备记录
-projection.nml     # 投影配置
-kz.dat             # 已投影的 kz
+B_general          # Reusable matrix elements
+PROJECTION.json    # Input provenance and preparation record
+projection.nml     # Projection configuration
+kz.dat             # Projected kz values
 ```
 
-`PROJECTION.json` 不是完成标记；成功合并会输出 `B_GENERAL_COMPLETE`。
+`PROJECTION.json` is not a completion marker. Successful combination prints `B_GENERAL_COMPLETE`.
 
-## 4. 不同超胞与自旋构型复用
+## 4. Reuse Across Supercells and Spin Configurations
 
-固定原胞几何下，不同 L×L×1 超胞和自旋纹理共用同一个 `B_general`、模型包和 `pure_H0.au`，分别计算各自的 Hamiltonian。kx/ky 可改变，kz 必须在已投影列表内；更换模型、几何或 Wannier 基底需要重新投影。
+For fixed primitive-cell geometry, different L×L×1 supercells and spin textures share the same `B_general`, model package, and `pure_H0.au`, while computing their own Hamiltonians. kx/ky may change; kz must be in the projected list. Changing the model, geometry, or Wannier basis requires reprojection.
 
 ```sh
 "$ANSATZ_PYTHON" local_vfunc.py cal_Hsk \
@@ -97,12 +97,12 @@ kz.dat             # 已投影的 kz
   --output /absolute/H_case
 ```
 
-k 点文件首行为点数，随后每行 `kx ky kz weight`，权重和为 1。导数站点采用原生 Ni 编号 `x*L+y+1`，从 1 开始，表示绕全局 y 轴的角度导数；省略 `--derivative-sites` 则只计算 H。
+The k-point file starts with the point count, followed by `kx ky kz weight` on each line; weights sum to 1. Derivative sites use native one-based Ni numbering `x*L+y+1` and denote angular derivatives about the global y axis. Omit `--derivative-sites` to compute only H.
 
-默认输出逐 k 的 `value.k000001.h`、请求的 `dsite_XXXX.k000001.h` 和 `HAMILTONIAN.json`。矩阵为 little-endian complex128、Fortran 顺序、单位 eV，维数为 `60L²`；索引与 k 点信息保存在 JSON 的 `native_indices` 中。
+Default outputs are per-k `value.k000001.h`, requested `dsite_XXXX.k000001.h`, and `HAMILTONIAN.json`. Matrices are little-endian complex128 in Fortran order, in eV, with dimension `60L²`; index and k-point information is stored under `native_indices` in the JSON.
 
-添加 `--components` 输出 H0/Hv/HB/HU 分量；添加 `--keep-intermediates` 保留系数、原生输入和诊断文件。成功校验全部结果后才清理中间文件，失败时保留现场。单构型 `cal_Hsk` 不自动续算已有输出目录。
+Add `--components` for H0/Hv/HB/HU components, or `--keep-intermediates` to retain coefficients, native inputs, and diagnostic files. Intermediate files are removed only after all results pass validation; failures retain them. Single-configuration `cal_Hsk` does not automatically resume an existing output directory.
 
-批量能量、转矩与生产检查点用法见 [production 使用说明](../7_spin/README.md)。
+See the [production usage guide](../7_spin/README.md) for batch energy, torque, and production checkpoints.
 
-已完成的 `B_general` 仅检查头部、维度、几何和字节数，不再次全量扫描；分片首尾抽检不能检测所有中间块损坏。空间缓存写完不再整文件回读。
+Completed `B_general` files receive only header, dimension, geometry, and byte-count checks, without another full scan. First/last-block shard sampling cannot detect all interior-block corruption. Spatial caches are no longer read back in full after writing.

@@ -1,69 +1,69 @@
-# 验证摘要
+# Validation Summary
 
-下列旧局域、张量和 `joint` RVR 表格是历史验证记录，对应 [清理前代码](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1)。这些旧运行入口已于 2026-11-16 退役，表中的“当前入口”和 `make all` 指当时版本。当前 V1 的清理回归见 [6_RVR](6_RVR/README.md)，生产读出测试见 [production](7_spin/README.md)。
+The local, tensor, and `joint` RVR tables below are historical validation records for the [pre-cleanup code](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1). These legacy entry points were retired on 2026-11-16; “current entry” and `make all` in the tables refer to that version. See [6_RVR](6_RVR/README.md) for the current V1 cleanup regression and [production](7_spin/README.md) for production readout tests.
 
-| 检查 | 结果 |
+| Check | Result |
 |---|---|
-| LaNiO₂源码干净构建、对角/全分量拟合与重启、原阶段合并 | 通过 |
-| 公共ansatz离线测试、Makefile与Python构建入口 | 16项通过，1项因缺少MPI编译器跳过；两入口构建通过 |
-| nspin列范围、RVR长度/标记的12个回归案例 | 通过 |
-| 2×2冻结输入H与既有Python参考 | 最大差3.20e-14 eV |
-| 本征值、EF、B/U转矩与独立参考 | 最大差1.07e-13 eV、1.78e-14 eV、5.01e-15 eV/rad |
-| Φ与既有Python参考 | 最大差5.26e-11 meV/rad² |
-| 三维自旋方向、N本征值保持、HB/HU有限差分、27平移张量核 | 通过 |
-| 非默认Ueff/sigma/电子数/三维轴/读出位置、两种张量幅值与Ry/eV | 独立参考H差≤7.97e-15 eV、转矩差≤1.18e-14 eV/rad |
-| B/U导数中心差分、固定电子数自由能导数 | 矩阵差≤1.50e-11 eV/rad，总转矩差≤3.08e-8 eV/rad |
-| 原RVR合并→两套H_sk→背景合并 | nspin=1/2通过；不支持的额外通道报错 |
-| 当前入口与既有Python局域实现（U=1、sigma=.05） | H差1.08e-14 eV、Φ差8.38e-10 meV/rad² |
+| Clean build of LaNiO₂ sources, diagonal/full-component fitting and restart, original-stage combination | Passed |
+| Common ansatz offline tests, Makefile and Python build entry points | 16 passed, 1 skipped because no MPI compiler was available; both build entry points passed |
+| 12 regression cases for nspin column bounds and RVR lengths/markers | Passed |
+| H for frozen 2×2 inputs against the existing Python reference | Maximum difference 3.20e-14 eV |
+| Eigenvalues, EF, and B/U torques against an independent reference | Maximum differences 1.07e-13 eV, 1.78e-14 eV, 5.01e-15 eV/rad |
+| Φ against the existing Python reference | Maximum difference 5.26e-11 meV/rad² |
+| Three-dimensional spin directions, N eigenvalue preservation, HB/HU finite differences, 27-translation tensor kernel | Passed |
+| Nondefault Ueff/sigma/electron count/3D axes/readout sites, two tensor amplitudes, and Ry/eV | Independent-reference H difference ≤7.97e-15 eV, torque difference ≤1.18e-14 eV/rad |
+| Central differences of B/U derivatives and fixed-electron-number free-energy derivatives | Matrix difference ≤1.50e-11 eV/rad, total torque difference ≤3.08e-8 eV/rad |
+| Original RVR combination → two H_sk sets → background combination | nspin=1/2 passed; unsupported extra channels rejected |
+| Current entry against the existing Python local implementation (U=1, sigma=.05) | H difference 1.08e-14 eV, Φ difference 8.38e-10 meV/rad² |
 
-代码门槛：H/本征值/EF 1e-10 eV，转矩1e-9 eV/rad，电子数1e-8，Φ 1e-6 meV/rad²；有限差分矩阵2e-8 eV/rad、自由能转矩2e-7 eV/rad。上述新增核对使用既有小型合成模型。
+Code thresholds: H/eigenvalues/EF 1e-10 eV, torque 1e-9 eV/rad, electron count 1e-8, Φ 1e-6 meV/rad²; finite-difference matrices 2e-8 eV/rad and free-energy torque 2e-7 eV/rad. The additional comparisons above used existing small synthetic models.
 
-全尺寸网格、重新投影、角步与空间范围收敛、独立材料验证尚未完成。B/U为同一H的导数分解；当前+U入口的空间与轨道范围见README。测试和运行输出保存在仓库外。
+Full-size grids, reprojection, angular-step and spatial-range convergence, and independent material validation remain incomplete. B/U are derivative contributions of the same H; see the README for the spatial and orbital scope of the +U entry. Test and run outputs are stored outside the repository.
 
-## 四自旋原生三势 SVD 入口
+## Native Four-Spin, Three-Potential SVD Interface
 
-以下是新版 `V_func_tmp`（原名 `model.joint`）拟合/求值入口的实现核对，与上面的局域 `.au` 路径分开记录。
+The following implementation checks cover fitting/evaluation with the new `V_func_tmp` (formerly `model.joint`) and are recorded separately from the local `.au` path above.
 
-| 检查 | 结果 |
+| Check | Result |
 |---|---|
-| `make all` 外部干净构建，shell解包→Fortran读入→SVD拟合→模型读回→三势/导数求值 | 通过；生产链未调用Python |
-| 32态合成样例，含2个硬锚点、1个零权重异常留出态，混合Ry/eV与C/Fortran数组顺序 | 通过；scalar8、B40、N_vector12、N_cross6、N_chi4 均达到相应满秩 |
-| 独立NumPy约束SVD的标量/B系数 | 最大差7.13e-15 / 2.56e-15 eV |
-| 原Python特征求值的标量/B、完整N、HU | 最大差8.68e-18 eV、4.45e-16、4.45e-16 eV |
-| 标量/B与N解析导数中心差分 | 原生检查≤1.76e-12 eV/rad、2.05e-11 /rad；独立Python检查≤5.34e-13、6.41e-12 |
-| 三维方向、全局SO(3)/SU(2)、时间反演、64个晶体作用、非刚性N本征值变化及邻居dN | 通过 |
-| 既有真实93°DFT标签80×80×36网格读取，完整复数N、单位、原子顺序、VU关系 | 通过；未训练完整真实数据集 |
-| 16个边界/参数案例 | 通过；包含单精度/截断/顺序/非Hermitian/HU错配、锚点冲突、占据越界拒绝、覆盖保护、U=0/1.7、扰动Ni选择与归一化开关 |
-| 显式标量均值移除开关与模型元数据 | 通过；默认不移除，移除量记录在报告 |
-| 原有离线回归 | 16项通过，1项因缺少MPI编译器跳过 |
+| Clean external `make all` build; shell unpacking → Fortran input → SVD fitting → model readback → three-potential/derivative evaluation | Passed; no Python invoked in the production chain |
+| 32-state synthetic example with 2 hard anchors, 1 zero-weight anomalous holdout, mixed Ry/eV and C/Fortran array order | Passed; scalar8, B40, N_vector12, N_cross6, and N_chi4 all reached their respective full ranks |
+| Scalar/B coefficients against independent NumPy constrained SVD | Maximum differences 7.13e-15 / 2.56e-15 eV |
+| Scalar/B, full N, and HU against original Python feature evaluation | Maximum differences 8.68e-18 eV, 4.45e-16, 4.45e-16 eV |
+| Central differences of analytical scalar/B and N derivatives | Native checks ≤1.76e-12 eV/rad, 2.05e-11 /rad; independent Python checks ≤5.34e-13, 6.41e-12 |
+| 3D directions, global SO(3)/SU(2), time reversal, 64 crystal operations, nonrigid N eigenvalue changes, and neighbor dN | Passed |
+| Reading existing real 93° DFT labels on an 80×80×36 grid: full complex N, units, atom order, and VU relation | Passed; the full real dataset was not trained |
+| 16 boundary/parameter cases | Passed; included rejection of single precision/truncation/order/non-Hermitian/HU mismatches, anchor conflicts, out-of-range occupations, overwrite protection, U=0/1.7, perturbed Ni selection, and normalization switch |
+| Explicit scalar-mean removal switch and model metadata | Passed; disabled by default, with the removed amount recorded in the report |
+| Existing offline regression | 16 passed, 1 skipped because no MPI compiler was available |
 
-新入口的门槛为系数/势/N读回与独立求值1e-10（按各自单位）、角度导数中心差分1e-8；SVD相对截断默认1e-10并报告浮点下限后的实际截断。没有使用5meV物理目标代替代码一致性门槛。
-首次SVD验证仅覆盖DFT标签读取、三势拟合和求值/导数实现；当时未覆盖的新特征RVR/Hamiltonian/转矩连接见下节。26态完整真实拟合、旧投影算符损失等效及大超胞非刚性N延拓尚未验证。
+Thresholds for the new interface are 1e-10 in the respective units for coefficient/potential/N readback and independent evaluation, and 1e-8 for central differences of angular derivatives. The default SVD relative cutoff is 1e-10; the effective cutoff after applying the floating-point floor is reported. The 5 meV physical target was not used in place of code-consistency thresholds.
+The initial SVD validation covered only DFT-label reading, three-potential fitting, and evaluation/derivative implementation. The new-feature RVR/Hamiltonian/torque connection, which was not covered then, is described below. Full real 26-state fitting, equivalence to the old projected-operator loss, and nonrigid N extension to large supercells remain unverified.
 
-2026-11-08 文件名回归：源码树外 `make all` 干净构建通过；以改名前 commit `2fe6859` 的源码独立构建基线，复用32态小网格合成输入。新 `V_func_tmp` 与原 `model.joint`、四个新命名求值文件与对应旧文件均逐字节一致，数值差为0；`fit_report.txt` 除显式输入目录外一致。默认/显式路径、输出前缀、格式头/版本/截断拒绝及模型/运行目录/求值输出覆盖保护通过。新shell不生成 `rows.manifest`，历史文件不改动。未进行真实重训、投影或HPC计算。
+2026-11-08 filename regression: a clean out-of-tree `make all` build passed. An independently built baseline from pre-rename commit `2fe6859` reused the 32-state small-grid synthetic inputs. The new `V_func_tmp` and old `model.joint`, and the four renamed evaluation files and their predecessors, were byte-for-byte identical, with zero numerical difference. `fit_report.txt` was identical apart from the explicit input directory. Default/explicit paths, output prefixes, format-header/version/truncation rejection, and overwrite protection for models/run directories/evaluation outputs passed. The new shell script does not generate `rows.manifest`; historical files are unchanged. No real retraining, projection, or HPC calculation was performed.
 
-## 三势 RVR → 完整H → 三项转矩/Φ
+## Three-Potential RVR → Full H → Three Torque Contributions/Φ
 
-以下使用源码树外的合成四Ni周期胞，验证原生生产链；没有运行真实大网格投影或HPC作业。
+The following uses a synthetic periodic four-Ni cell outside the source tree to validate the native production chain. No real large-grid projection or HPC job was run.
 
-| 检查 | 结果 |
+| Check | Result |
 |---|---|
-| 干净 `make all`，含新cal_RVR_split/combine及ansatzU；gfortran双精度/BLAS/LAPACK | 通过；最终构建同时启用 `-fcheck=all` |
-| 120个空间轨道、256网格点、复数Wannier、3个平移、3个不等权三维K点；Fortran完整120行投影/合并/读回 | 通过；49组空间核与独立网格收缩最大差4.45e-16 eV |
-| `hbg+[Hv-Hv_ref]+HB+HU`，独立Bloch背景和原四Ni projector | 全H最大差7.46e-16 eV；各分量分别核对，无标量或HU重复计数 |
-| 本征值、EF、FD占据与固定电子数 | 最大差7.33e-15 eV、1.25e-16 eV、5.89e-15；目标电子数误差0 |
-| v/B/U角度导数与独立中心差分 | 最大差2.63e-11 / 6.57e-12 / 1.49e-11 eV/rad |
-| 同一全H/占据的三项转矩及总转矩 | 最大差1.05e-16 / 8.33e-17 eV/rad；非零标量与U贡献 |
-| 标量/B/U及总Φ | 最大差7.26e-12 / 6.81e-12 meV/rad² |
-| 固定电子数自由能角度差分与总转矩 | 最大差8.34e-10 eV/rad |
-| 非刚性完整复数N及邻居Ni导数，U=0/1.7、sigma=.083、每Ni19.3电子、另一扰动Ni | 通过；N虚部最大1.09e-3，邻居dN最大1.46e-4/rad；U=0时HU/dHU严格为0 |
-| 全H及各分量的全局SU(2)旋转，三项转矩与EF不变 | 矩阵最大差4.48e-16 eV；转矩1.39e-16 eV/rad；EF 5.21e-18 eV |
-| 原primitive30到四胞120的平移/相位/支持映射 | 原生投影与独立展开逐字节一致；Bloch折叠差7.81e-18；截断已有支持报错 |
-| 移开原V_func_tmp、冻结模型、参考场及Wannier目录，只读可移动B_general | 53个第一态输出逐字节一致，无再次投影或网格读取 |
-| 模型/格式/背景/覆盖保护、混用行拒绝、求积权重和cal_TF支持实际参与计算 | 通过；权重1.7的独立缩放差≤8.33e-16 eV |
-| 原局域U=0、U=.37三维纹理、U=1表3、非默认电子数/FD与原三势网格求值 | U=0/表3/非默认数值及原三势求值逐字节一致；最终构建的三维U=.37最大低位差4.85e-19，低于原1e-10门槛 |
-| 原仓库离线测试 | 16项通过；1项因缺少MPI编译器跳过 |
+| Clean `make all`, including new cal_RVR_split/combine and ansatzU; gfortran double precision/BLAS/LAPACK | Passed; the final build also enabled `-fcheck=all` |
+| 120 spatial orbitals, 256 grid points, complex Wannier functions, 3 translations, 3 unequally weighted 3D K points; complete 120-row Fortran projection/combination/readback | Passed; maximum difference of 49 spatial kernels against independent grid contraction 4.45e-16 eV |
+| `hbg+[Hv-Hv_ref]+HB+HU`, independent Bloch background and original four-Ni projectors | Maximum full-H difference 7.46e-16 eV; each component checked separately, with no scalar or HU double counting |
+| Eigenvalues, EF, FD occupations, and fixed electron count | Maximum differences 7.33e-15 eV, 1.25e-16 eV, 5.89e-15; target electron-count error 0 |
+| v/B/U angular derivatives against independent central differences | Maximum differences 2.63e-11 / 6.57e-12 / 1.49e-11 eV/rad |
+| Three torque contributions and total torque from the same full H/occupations | Maximum differences 1.05e-16 / 8.33e-17 eV/rad; nonzero scalar and U contributions |
+| Scalar/B/U and total Φ | Maximum differences 7.26e-12 / 6.81e-12 meV/rad² |
+| Fixed-electron-number free-energy angular differences against total torque | Maximum difference 8.34e-10 eV/rad |
+| Nonrigid full complex N and neighboring-Ni derivatives; U=0/1.7, sigma=.083, 19.3 electrons/Ni, another perturbed Ni | Passed; maximum imaginary part of N 1.09e-3, neighbor dN 1.46e-4/rad; HU/dHU exactly zero at U=0 |
+| Global SU(2) rotation of full H and each component; invariance of three torque contributions and EF | Maximum matrix difference 4.48e-16 eV; torque 1.39e-16 eV/rad; EF 5.21e-18 eV |
+| Original primitive30-to-four-cell-120 translation/phase/support mapping | Native projection and independent expansion byte-for-byte identical; Bloch-folding difference 7.81e-18; truncation of existing support rejected |
+| Move aside original V_func_tmp, frozen model, reference fields, and Wannier directories; read only portable B_general | 53 first-state outputs byte-for-byte identical, without reprojection or grid reads |
+| Model/format/background/overwrite protection, mixed-row rejection, quadrature weights and cal_TF support actually used | Passed; independent scaling difference for weight 1.7 ≤8.33e-16 eV |
+| Original local U=0, U=.37 3D texture, U=1 Table 3, nondefault electron count/FD, and original three-potential grid evaluation | U=0/Table 3/nondefault numerics and original three-potential evaluation byte-for-byte identical; final-build 3D U=.37 maximum low-order difference 4.85e-19, below the original 1e-10 threshold |
+| Original repository offline tests | 16 passed; 1 skipped because no MPI compiler was available |
 
-沿用预定代码门槛：矩阵/本征值/EF 1e-10 eV、转矩1e-9 eV/rad、电子数1e-8、Φ 1e-6 meV/rad²；导数有限差分2e-8 eV/rad、固定数自由能转矩2e-7 eV/rad。未放宽为物理RMS门槛。
+The prescribed code thresholds were retained: matrices/eigenvalues/EF 1e-10 eV, torque 1e-9 eV/rad, electron count 1e-8, Φ 1e-6 meV/rad²; derivative finite differences 2e-8 eV/rad and fixed-number free-energy torque 2e-7 eV/rad. They were not relaxed to physical RMS thresholds.
 
-结论覆盖上述合成2×2实现与旧入口回归。真实冻结模型所用参考标量场/共同gauge绑定、完整DFT拟合/投影与真实表3、空间/角步收敛及大胞N延拓未完成；不继承旧局域模型的物理资格。
+These conclusions cover the synthetic 2×2 implementation and legacy-entry regression above. Binding the reference scalar field/common gauge of the real frozen model, full DFT fitting/projection and real Table 3, spatial/angular-step convergence, and large-cell N extension remain incomplete. Physical validation of the old local model does not carry over.

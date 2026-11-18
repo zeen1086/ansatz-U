@@ -1,86 +1,77 @@
-# 四自旋三势拟合
+# Four-spin, three-potential fitting
 
-生产链仅用 Fortran、shell 和 BLAS/LAPACK：
+The production chain uses only Fortran, shell, and BLAS/LAPACK:
 
 ```sh
 make joint BUILD=/absolute/build
 4_potential/fit/run_joint.sh /absolute/states.tsv \
   examples/4_potential/joint_fit.nml /absolute/new_run /absolute/build
-# 先在当前目录保存仓库绝对路径，再进入外部运行目录求值：
+# Save the repository path before entering the external evaluation directory:
 repo="$PWD"
 cd /absolute/new_run
 /absolute/build/eval_joint "$repo/examples/4_potential/joint_eval.nml" \
   V_func_tmp "$repo/examples/4_potential/joint_texture.dat"
 ```
 
-`RUN`、`BUILD` 必须在源码树外，运行目录须不存在。已有输出不覆盖。
-没有 Python 生产依赖、自动安装、DFT/Wannier 重算或作业提交。
+`RUN` and `BUILD` must be outside the source tree, and the run directory must not already exist. Existing outputs are not overwritten. There is no Python production dependency, automatic installation, DFT/Wannier rerun, or job submission.
 
-## 输入与读取
+## Inputs and readers
 
-`states.tsv` 每行五个 TAB 分隔字段：`name weight anchor unit archive_path`。
-路径相对清单文件或为绝对路径；`unit=Ry/eV`，权重非负。
-`anchor=1` 是精确约束；`weight=0,anchor=0` 是只报告残差的留出态。
-示例在 `examples/4_potential/joint_archives.tsv`。
+Each line of `states.tsv` has five TAB-separated fields: `name weight anchor unit archive_path`. Paths are absolute or relative to the list file; `unit=Ry/eV` and weights are nonnegative. `anchor=1` imposes an exact constraint; `weight=0,anchor=0` defines a held-out state whose residuals are reported only. See `examples/4_potential/joint_archives.tsv`.
 
-shell 用 `unzip -p` 按固定成员名读取已有 DFT 标签 NPZ，不计算或转换数值：
+The shell uses `unzip -p` to extract named members from existing DFT-label NPZ files without computing or converting numerical values:
 
-| 成员 | dtype / shape / 约定 |
+| Member | dtype / shape / convention |
 |---|---|
-| `grid.npy` | int32/int64，`(3,)`；展平实空间网格 x 最快 |
-| `atom_ids.npy` | int32/int64，`(4,)`；默认 Ni5,6,7,8 |
-| `v_scalar_Ry.npy`, `B_material_Ry.npy` | float64，`(ngrid,)`、`(ngrid,3)` |
-| eV 标签的对应成员 | `v_scalar_eV.npy`, `B_material_eV.npy` |
-| `moments_muB.npy` | float64，`(4,3)`；显式按配置归一化方向，原幅值写入报告 |
-| `N.npy` | complex128，`(4,10,10)`；每Ni `[up d1..5,down d1..5]` |
-| 可选 `V_U_eV.npy` | 同 N；校验 `Ueff*(I/2-N)`，不叠加进标量/B标签 |
+| `grid.npy` | int32/int64, `(3,)`; x varies fastest in the flattened real-space grid |
+| `atom_ids.npy` | int32/int64, `(4,)`; Ni5,6,7,8 by default |
+| `v_scalar_Ry.npy`, `B_material_Ry.npy` | float64, `(ngrid,)` and `(ngrid,3)` |
+| Corresponding members for eV labels | `v_scalar_eV.npy`, `B_material_eV.npy` |
+| `moments_muB.npy` | float64, `(4,3)`; direction normalization is explicit in configuration, and original amplitudes are reported |
+| `N.npy` | complex128, `(4,10,10)`; `[up d1..5,down d1..5]` for each Ni |
+| Optional `V_U_eV.npy` | Same shape as N; checks `Ueff*(I/2-N)` without adding it to scalar/B labels |
 
-Fortran 原生解析 NPY v1/v2/v3、C/Fortran 顺序和 little-endian 数据；对象、单精度、截断、尺寸/原子顺序错配、非有限值及非 Hermitian N 均报错。
-归一化后使用固定长度的自旋方向；DFT幅值已包含在标签和拟合系数中，不再乘0.372、0.4或S²，也未引入独立的纵向幅值自由度。
-也可直接调用 `fit_joint fit.nml dataset.manifest [V_func_tmp [fit_report.txt]]`。
-省略后两个参数时，在调用目录新建 `V_func_tmp` 和 `fit_report.txt`；也可显式指定外部路径。
-manifest 首行态数，每态两行：`name weight anchor unit`，以及显式解包目录；目录内为 `grid/atom_ids/scalar/B/moments/N.npy` 和可选 `VU.npy`。
-shell 直接写入 `dataset.manifest`，不再生成 `rows.manifest`；既有运行结果不改动。
+Fortran reads NPY v1/v2/v3, C/Fortran array order, and little-endian data natively. Object arrays, single precision, truncated files, dimension/atom-order mismatches, nonfinite values, and non-Hermitian N are rejected.
 
-## 模型与拟合目标
+Normalized spins are fixed-length directions. DFT amplitudes are already represented in the labels and fitted coefficients: there is no additional factor of 0.372, 0.4, or S² and no independent longitudinal-amplitude degree of freedom.
 
-- 标量：原 scalar8 特征，即常数、六个 `ei·ej-1` 和 `alpha*(1-alpha)`。
-- B：原12组基础矢量和28组非线性残差矢量，三分量同时拟合。
-- N：原 `scalar/chi/vector/cross` 特征与实对称/虚反对称 d 轨道矩阵基，重构完整复数10×10矩阵；四个Ni共同依赖全部四个输入自旋，允许占据本征值变化。
-- 沿用原64个方形四Ni晶体作用、Ni顺序和QE实d轨道约定；全局自旋 SO(3)/SU(2) 和时间反演性质由特征保持。
-- 网格 `nx=ny` 可被4整除、`nz` 为偶数，Ni位于原四分之一晶胞位置；不自动将四输入非刚性N推广到任意大超胞。
+You can also call `fit_joint fit.nml dataset.manifest [V_func_tmp [fit_report.txt]]` directly. If the last two arguments are omitted, it creates `V_func_tmp` and `fit_report.txt` in the calling directory; explicit external paths are also accepted. The manifest starts with the number of states, followed by two lines per state: `name weight anchor unit` and the explicit extraction directory. Each directory contains `grid/atom_ids/scalar/B/moments/N.npy` and optional `VU.npy`. The shell writes `dataset.manifest` directly, without generating `rows.manifest`; existing run results are unchanged.
 
-目标为显式态权重下的原始标量场、B场和N矩阵三个最小二乘块。
-它采用旧 Python 的特征族，**不是旧投影算符联合损失或其冻结训练结果的复现**。
-SVD 直接求解，硬锚点用零空间消元；报告有效相对截断、秩、奇异值及逐态残差。
-`fit_report.txt` 集中保留拟合参数、态权重与锚点、秩/奇异值、逐态残差和占据检查。
-未识别方向取声明的 SVD 最小范数，不静默增加正则项或重调权重。
-`remove_scalar_mean` 默认关闭；开启时每态被移除的均值明确记入报告，不能与另一势零点直接比较。
-原 `fit_new` 的对角/全分量迭代和重启接口保留；新 SVD 入口不使用迭代次数或学习率。
+## Model and fitting objective
 
-新版 `V_func_tmp`（原名 `model.joint`）保留新 schema：16字节 `LANIO2_JOINT_V1 `、12个int32、两个float64、两个int32标志，接着列优先float64数组 `(8,ngrid)`、`(40,ngrid)`、`(8,15)`、`(4,10)`、`(12,15)`、`(6,10)`。
-标量/B系数为eV，N系数无量纲；训练占据越界时保留 gate=0 候选和报告，求值器拒绝使用。N不裁剪。
-读取仍检查格式头、版本、字节序、尺寸和完整字节数；原 `model.joint` 内容无需转换，只改变默认文件名。
+- Scalar: the original scalar8 features—one constant, six `ei·ej-1` terms, and `alpha*(1-alpha)`.
+- B: the original 12 base vectors and 28 nonlinear residual vectors, fitting all three components together.
+- N: the original `scalar/chi/vector/cross` features with real-symmetric/imaginary-antisymmetric d-orbital matrix bases reconstruct the full complex 10×10 matrix. All four Ni sites depend on all four input spins, allowing occupation eigenvalues to change.
+- The original 64 square-cell crystal operations, Ni ordering, and QE real-d-orbital convention are retained. The features preserve global spin SO(3)/SU(2) and time-reversal properties.
+- The grid requires `nx=ny` divisible by 4 and even `nz`, with Ni at the original quarter-cell positions. The four-input nonrigid N model is not automatically extended to arbitrary supercells.
 
-## 求值与角度导数
+The objective consists of three least-squares blocks for the raw scalar field, B field, and N matrices, with explicit state weights. It uses the old Python feature families; **it does not reproduce the old joint projected-operator loss or its frozen training results**.
 
-输入四行 `ex ey ez axis_x axis_y axis_z`，按 DFT Ni 顺序；方向与轴均为单位向量。
-`derivative_site=1..4` 选择扰动输入。导数按 `dei/dtheta=axis×ei` 解析求出，包含标量/B及所有受影响Ni的N。
-`ueff` 从求值输入实际读取，`VU=ueff*(I/2-N)`、`dVU=-ueff*dN`；改变此参数并不重新求解DFT密度。
+SVD solves the problem directly, with hard anchors eliminated through a null-space construction. Reports include the effective relative cutoff, ranks, singular values, and per-state residuals. `fit_report.txt` collects fitting parameters, state weights and anchors, ranks/singular values, residuals, and occupation checks. Unidentified directions use the declared SVD minimum-norm solution; no regularizer or weight adjustment is added silently.
 
-省略求值的第四参数时，在调用目录输出下列文件及 `eval_report.txt`。保留原二进制布局，不拆分记录：
+`remove_scalar_mean` is off by default. When enabled, the removed mean for each state is recorded explicitly; results cannot be compared directly with another potential zero. The original `fit_new` diagonal/full-component iteration and restart interfaces remain available. The new SVD entry point uses neither iteration counts nor learning rates.
 
-| 原名 | 新名 | 单位 |
+The new `V_func_tmp` (formerly `model.joint`) retains its schema: 16-byte `LANIO2_JOINT_V1 `, twelve int32 values, two float64 values, two int32 flags, then column-major float64 arrays of shapes `(8,ngrid)`, `(40,ngrid)`, `(8,15)`, `(4,10)`, `(12,15)`, and `(6,10)`. Scalar/B coefficients are in eV; N coefficients are dimensionless. If training occupations are out of bounds, the candidate and report are retained with gate=0, and the evaluator rejects the candidate. N is not clipped.
+
+Readers still check magic, version, byte order, dimensions, and total byte count. Existing `model.joint` contents need no conversion; only the default filename changed.
+
+## Evaluation and angular derivatives
+
+Input consists of four lines `ex ey ez axis_x axis_y axis_z` in DFT Ni order. Both directions and axes must be unit vectors. `derivative_site=1..4` selects the perturbed input. Analytic derivatives use `dei/dtheta=axis×ei` and include scalar/B terms and N on every affected Ni site.
+
+`ueff` is read from the evaluation input: `VU=ueff*(I/2-N)` and `dVU=-ueff*dN`. Changing it does not solve a new DFT density.
+
+Without a fourth evaluation argument, the following files and `eval_report.txt` are written in the calling directory. Binary layouts are preserved without splitting records:
+
+| Former name | Current name | Units |
 |---|---|---|
-| `fields_Ry.bin` | `V_fit` | Ry，scalar/Bx/By/Bz |
-| `dfields_Ry_per_rad.bin` | `dV_fit` | Ry/rad，同上 |
-| `N_VU_eV.bin` | `N_VU_fit` | N无量纲，VU为eV |
-| `dN_dVU_eV_per_rad.bin` | `dN_dVU_fit` | dN为1/rad，dVU为eV/rad |
+| `fields_Ry.bin` | `V_fit` | Ry; scalar/Bx/By/Bz |
+| `dfields_Ry_per_rad.bin` | `dV_fit` | Ry/rad; same components |
+| `N_VU_eV.bin` | `N_VU_fit` | Dimensionless N; VU in eV |
+| `dN_dVU_eV_per_rad.bin` | `dN_dVU_fit` | dN in 1/rad; dVU in eV/rad |
 
-仍可传入第四参数 `output_prefix`，例如 `/absolute/new_run/probe`，生成 `probe.V_fit` 等四个文件及 `probe.txt`。
-场文件首记录为网格，第二记录为 `(ngrid,4)` float64，网格x最快；N文件首记录为原子顺序及Ueff，导数文件首记录为原子顺序及扰动Ni。
-N/VU及其导数各保留两个 `(10,10,4)` complex128记录，包含全部轨道/自旋非对角元。
+The optional fourth argument is an `output_prefix`, such as `/absolute/new_run/probe`, producing four files such as `probe.V_fit` plus `probe.txt`. Field files store the grid in the first record and `(ngrid,4)` float64 values in the second, with x varying fastest. N files begin with atom order and Ueff; derivative files begin with atom order and perturbed Ni. N/VU and their derivatives each retain two `(10,10,4)` complex128 records, including all orbital/spin off-diagonal elements.
 
-本入口完成 DFT标签→三势拟合→势和解析导数求值。
-新版 `V_func_tmp` **不兼容**旧五记录同名文件或局域 `.au` 格式，不能作为旧 `fit_new` 的重启输入。
-该 scalar8/B40 拟合与网格求值入口继续保留；其专用 `joint` RVR 和 `ansatzU` 后端已于 2026-11-16 退役。当前 [V1 RVR](../../6_RVR/README.md)读取冻结局域核与反馈模型，不接收此处生成的参数。旧后端可从 [清理前版本](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1/6_RVR/joint) 查阅。
+This entry point covers DFT labels → three-potential fitting → potentials and analytic derivatives. The new `V_func_tmp` is **incompatible** with the old five-record file of the same name and the local `.au` format; it cannot restart old `fit_new` calculations.
+
+This scalar8/B40 fitting and grid-evaluation interface remains available, but its dedicated `joint` RVR and `ansatzU` backends were retired on 2026-11-16. Current [V1 RVR](../../6_RVR/README.md) reads frozen local kernels and a feedback model, not the parameters produced here. The old backend remains in the [pre-cleanup revision](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1/6_RVR/joint).
