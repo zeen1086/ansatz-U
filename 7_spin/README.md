@@ -101,6 +101,13 @@ Configuration paths and data conventions:
 - `interface`: directory containing `V_func_tmp/V_FUNC.json`; replace the all-zero placeholder `model_id` with the actual ID from `V_FUNC.json`.
 - `input_root`: contains `inputs/Lxx/structure.npz` and `inputs/Lxx/CASE.json`.
   CASE retains the production pairing, angle, and site definitions; see the local interface for supercell and Ni ordering.
+  Each entry in `angle_configurations` accepts an optional `global_spin_rotation_deg` rotation vector.
+  Its direction is the Cartesian rotation axis and its magnitude is the active right-hand angle in degrees.
+  For example, `[0, 180, 0]` rotates the entire case about (+y) after the local site perturbation.
+  Supply the original spins in `structure.npz` and specify the global rotation once in the case.
+  The complete-energy reader applies it to each frozen reference occupation as
+  `(U ⊗ I5) N_bg (U ⊗ I5)†` and to the three magnetization components of the same reference density.
+  Omitting the rotation preserves the original frame, including for locally tilted cases.
 - `references`: common-Wannier `data.npz`, `k_0001.npz ...`, and `wr_0001.npy ...`.
 - `work`: shared data directory `shared/`, containing `RVR/B_general`, `RVR/PROJECTION.json`,
   `basis/pure_H0.au`, and `basis/bloch.npy`.
@@ -125,8 +132,10 @@ The `complete_energy` configuration additionally requires:
   Existing eigenstates may also be reused if complete and passing residual checks; otherwise they are rediagonalized.
   If omitted, complete V1 coefficients for these configurations are generated in the new output directory.
 
-This implementation fixes the LaNiO2 primitive-cell grid at 40×40×36, with 30 spatial orbitals, full 8³ WS data,
-Ueff=1 eV, 21 active electrons/Ni, and 41 total valence electrons/Ni. It is not an arbitrary-material interface.
+The LaNiO2 package uses a primitive-cell grid of 40×40×36, 30 spatial orbitals, full 8³ WS data,
+21 active electrons/Ni and 41 total valence electrons/Ni. Its frozen model and QE reference use Ueff=1 eV.
+The complete-energy driver reads `Ueff_eV` from the model's `V_FUNC.json` and checks the Hamiltonian
+coefficient headers against it. A calculation at another Ueff requires matching model and reference data.
 Build the native QE adapter from an existing QE `PP/src`, placing outputs in a separate directory:
 
 ```sh

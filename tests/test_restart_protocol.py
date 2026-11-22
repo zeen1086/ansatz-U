@@ -148,13 +148,16 @@ class RestartProtocolTests(unittest.TestCase):
                     (cwd/f'case_{i:02}_TRUE.bin').write_bytes(b'field')
                 kw['stdout'].write('GGA_BRANCH_REEXPORT_COMPLETE');kw['stdout'].flush()
             with patch.object(energy,'R',root),patch.dict(energy.ENERGY,{'native_binary':str(binary)}),patch.object(energy,'input_file'),patch.object(energy,'read_density',return_value=np.zeros((1,4))),patch.object(energy.subprocess,'run',side_effect=run):
-                with self.assertRaises(subprocess.CalledProcessError):energy.native(4)
+                ueff=2.75
+                with self.assertRaises(subprocess.CalledProcessError):energy.native(4,ueff)
                 self.assertFalse((root/'L04/native/COMPLETE.json').exists())
-                energy.native(4)
+                energy.native(4,ueff)
                 (root/'L04/case_00/ENERGY.json').unlink()
-                energy.native(4)
+                energy.native(4,ueff)
             self.assertEqual(len(calls),2)
-            self.assertTrue((root/'L04/case_00/ENERGY.json').exists())
+            restored=json.loads((root/'L04/case_00/ENERGY.json').read_text())
+            self.assertEqual(restored['Ueff_eV'],ueff)
+            self.assertAlmostEqual(restored['terms']['EU'],.5*ueff*10*(.3-.3**2))
             self.assertEqual(len(list((root/'L04').glob('native.incomplete-*'))),1)
 
 

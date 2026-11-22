@@ -71,12 +71,22 @@ class ProductionEnergyTest(unittest.TestCase):
         complete_readout.selfcheck()
         complete_readout.full_functional_selfcheck()
         summarize_energy.selfcheck()
+        n = np.eye(10, dtype=complex)*.4
+        n[1, 5], n[5, 1] = .04+.07j, .04-.07j
+        direction = np.zeros_like(n)
+        direction[1, 5], direction[5, 1] = .2-.3j, .2+.3j
+        ueff, step = 2.75, 1e-5
+        _, potential = complete_readout.hubbard(n, ueff)
+        np.testing.assert_allclose(potential, ueff*(.5*np.eye(10)-n))
+        eplus, eminus = (complete_readout.hubbard(n+s*step*direction, ueff)[0] for s in (1, -1))
+        self.assertAlmostEqual((eplus-eminus)/(2*step), np.trace(potential@direction).real, places=9)
 
     def test_complete_spectrum_is_invariant_under_a_scalar_gauge_shift(self):
         import complete_energy
         from common import chemical_potential
 
         length, k = 2, np.array([.5, 0., .125])
+        ueff = 2.75
         cells = length**2
         dimension = 60*cells
         eye = np.eye(dimension)
@@ -111,14 +121,17 @@ class ProductionEnergyTest(unittest.TestCase):
                     coeff.parent.mkdir(parents=True)
                     coeff.write_bytes(struct.pack('<16s8i64s2d', b'LANIO2_COEFF_V2 ',
                         1, 1, length, cells, 0, 0, 0, 0, complete_energy.CONFIG['model_id'].encode(),
-                        1., offset) + bytes(cells*(4*8 + 100*16)))
-                    complete_energy.spectrum(length, case_index, 1, {1: root/'wave.npy'}, {1: root}, root/'rvr')
+                        ueff, offset) + bytes(cells*(4*8 + 100*16)))
+                    complete_energy.spectrum(length, case_index, 1, {1: root/'wave.npy'}, {1: root}, root/'rvr', ueff)
                     with np.load(complete_energy.folder(length, case_index)/'k_0001.npz') as data:
                         e, Q, H = data['e'], data['Q'], data['H']
                     mu = chemical_potential(e[None], np.ones(1), 21*cells)
                     f = complete_readout.fermi(e, mu)[0]
                     rho = density_map.fold_density(psi, (Q*f)@Q.conj().T, length)
                     observations.append((H, e, mu, f, rho))
+                # An existing spectrum cannot be reused with a mismatched coefficient header.
+                with self.assertRaisesRegex(ValueError, 'Coefficient Ueff'):
+                    complete_energy.spectrum(length, 1, 1, {1: root/'wave.npy'}, {1: root}, root/'rvr', 1.)
         before, after = observations
         for name, a, b, shift in zip(('H', 'e', 'mu', 'occupations', 'density'),
                                      before, after, (overlap, 1., 1., 0., 0.)):
@@ -158,16 +171,17 @@ class ProductionEnergyTest(unittest.TestCase):
         rho = np.array([[2., .1, -.2, .3]])
         v = np.array([[.4, -.1, .2, .5]])
         n = np.eye(10, dtype=complex)[None]*.3
-        n[0, 0, 1] = .02j
-        n[0, 1, 0] = -.02j
+        n[0, 0, 6] = .02j
+        n[0, 6, 0] = -.02j
         vu = np.eye(10)[None]*.17
         bare = -4.
         band = bare+complete_readout.integral(rho, v, 1.)+complete_readout.trace(n, vu)
         free = band-.07
         qe = np.array([.2, -.3, -.01, 41., 99., 88., -.4, .13])
         ry = complete_readout.RY
+        ueff = 2.75
         expected, _ = complete_readout.energy(free, 0., rho, v, n, vu,
-            qe[0]*ry, qe[1]*ry, qe[2]*ry, qe[6]*ry, 1.)
+            qe[0]*ry, qe[1]*ry, qe[2]*ry, qe[6]*ry, 1., ueff)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             native = root/'L04/native'
@@ -191,11 +205,60 @@ class ProductionEnergyTest(unittest.TestCase):
                  patch.object(complete_energy, 'read_density', return_value=np.zeros((1,4))), \
                  patch.object(complete_energy, 'input_file'), \
                  patch.object(complete_energy.subprocess, 'run', side_effect=fake_native):
-                complete_energy.native(4)
+                complete_energy.native(4, ueff)
             result = json.loads((root/'L04/case_00/ENERGY.json').read_text())
             self.assertAlmostEqual(result['energy'], expected, places=12)
+            self.assertEqual(result['Ueff_eV'], ueff)
+            self.assertAlmostEqual(result['terms']['EU'], .5*ueff*(10*(.3-.3**2)-2*.02**2), places=12)
             self.assertAlmostEqual(result['terms']['minus_active_potential'], bare-band, places=12)
             self.assertTrue(result['constant_reference_excluded'])
+
+    def test_global_spin_frame_in_case_and_density_assembly(self):
+        import complete_energy as driver
+        import run_material
+
+        # A 120-degree rotation about (1,1,1) cycles x -> y -> z -> x.
+        local = dict(perturb_site_native_1based=1, angle_deg=.25)
+        rotated = dict(local, global_spin_rotation_deg=[120/np.sqrt(3)]*3)
+        spins = np.array([[0.,0.,1.],[0.,0.,-1.],[0.,0.,-1.],[0.,0.,1.]])
+        moments = np.array([[.01,-.02,.03],[-.02,.03,.01],[.04,.01,-.03],[.03,-.01,.02]])
+        orbital = np.eye(5, dtype=complex)
+        orbital[1,2], orbital[2,1] = .2j, -.2j
+        def shells(vectors):
+            return np.array([np.kron([[z, x-1j*y],[x+1j*y, -z]], orbital) for x,y,z in vectors])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inputs = root/'inputs/L02'
+            inputs.mkdir(parents=True)
+            (inputs/'CASE.json').write_text(json.dumps({'angle_configurations':[local, rotated]}))
+            np.savez(inputs/'structure.npz', spins=spins)
+            ref = root/'reference'
+            ref.mkdir()
+            density = np.column_stack((np.full(4,41.),moments))[:,None,:]
+            np.savez(ref/'background.npz', density=density, N=shells(moments))
+            with patch.object(run_material,'ROOT',root), patch.multiple(
+                    driver, ROOT=root, R=root, SHARED=root, NG=1, cells_to_grid=lambda a,L:a[:,0]):
+                original_spins=run_material.spin_structure(2,local)['spins']
+                self.assertGreater(original_spins[0,0], 0.)
+                np.testing.assert_allclose(run_material.spin_structure(2,rotated)['spins'],
+                                           original_spins[:,[2,0,1]], atol=1e-15)
+                for i, expected in enumerate((moments,moments[:,[2,0,1]])):
+                    case=driver.folder(2,i)
+                    case.mkdir(parents=True)
+                    active=.25*np.broadcast_to(np.eye(10),(4,10,10))
+                    for z in range(8):
+                        np.savez(case/f'density_z{z}.npz', density=np.zeros_like(density),
+                                 N=active/8, bare=0., F=0., band=0., count=0.)
+                    driver.assemble_density(2,i,1.)
+                    with np.load(case/'DENSITY.npz') as output:
+                        np.testing.assert_allclose(output['N'], active+shells(expected), atol=1e-15)
+                    field=native_input.read_density(case/'DENSITY.bin',2)
+                    np.testing.assert_allclose(field[:,1:], expected, atol=1e-15)
+                    np.testing.assert_array_equal(field[:,0], density[:,0,0])
+                for invalid in ([0,180], [0,float('nan'),0]):
+                    with self.assertRaisesRegex(ValueError,'rotation vector'):
+                        run_material.spin_structure(2,dict(local,global_spin_rotation_deg=invalid))
 
     def test_density_projection_and_fft_gauge(self):
         density_map.selfcheck()

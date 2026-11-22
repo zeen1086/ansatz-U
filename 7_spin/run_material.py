@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import numpy as np
+from scipy.spatial.transform import Rotation
 from scipy.special import erfc
 from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, SPINS, PYTHON, SIGMA, SOURCE
 from common import compute_node, run, save, load_h, chemical_potential, check_regression, quality_check
@@ -162,12 +163,22 @@ def coefficients(structure: Path, directory: Path, sites: list[int], step: float
             staged.rename(directory)
 
 
+def global_spin_rotation(case: dict) -> Rotation:
+    """Active rotation after the local perturbation, in reference Cartesian axes."""
+    degrees = np.asarray(case.get('global_spin_rotation_deg', [0., 0., 0.]), dtype=float)
+    if degrees.shape != (3,) or not np.isfinite(degrees).all():
+        raise ValueError('global_spin_rotation_deg must be a finite three-component rotation vector')
+    return Rotation.from_rotvec(np.deg2rad(degrees))
+
+
 def spin_structure(length, case):
     with np.load(ROOT/f'inputs/L{length:02}/structure.npz') as data:s=dict(data)
     site=case['perturb_site_native_1based']
     if site is not None:
         angle=np.deg2rad(case['angle_deg']);v=s['spins'][site-1].copy()
         s['spins'][site-1]=[np.cos(angle)*v[0]+np.sin(angle)*v[2],v[1],-np.sin(angle)*v[0]+np.cos(angle)*v[2]]
+    if 'global_spin_rotation_deg' in case:
+        s['spins'] = global_spin_rotation(case).apply(s['spins'])
     return s
 
 

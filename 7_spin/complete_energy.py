@@ -9,7 +9,7 @@ from complete_readout import static,operators,metric,fermi,loewner,hubbard,trace
 from native_input import input_file,write_density,read_density
 from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, quality_check, check_regression, shared_bundle
 from common import atomic_npz, valid_npz, valid_json, bind_inputs, archive_incomplete, input_digest
-from run_material import native_batch, binding, spin_structure, coefficient_identity, valid_coefficients
+from run_material import native_batch, binding, spin_structure, global_spin_rotation, coefficient_identity, valid_coefficients
 from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
 ENERGY=CONFIG['complete_energy']
@@ -17,13 +17,13 @@ R=Path(ENERGY['work']);OLD=WORK;MIN=Path(ENERGY['reference_run'])
 SHARED=Path(ENERGY.get('shared_work', ENERGY['work']))
 SIZES=ENERGY['sizes']
 
-def frozen():
+def frozen_metadata():
     sys.path.insert(0,str(SOURCE))
     from local_vfunc import metadata
     meta=metadata(INTERFACE/'V_func_tmp')
     if meta['model_id']!=CONFIG['model_id']:
         raise ValueError('Frozen V1 identity changed')
-    return len(meta['files'])+1
+    return meta
 
 from common import save
 
@@ -149,7 +149,7 @@ def load_operators(path):
     return np.load(path/'h0.npy',mmap_mode='r'),np.load(path/'projectors.npy',mmap_mode='r')
 
 
-def reference(z,slab,dv,identity,st):
+def reference(z,slab,dv,identity,st,ueff):
     out=SHARED/'reference';out.mkdir(exist_ok=True)
     if valid_npz(out/f'z{z}.npz',{'density':(4,NG,4),'N':(4,10,10),'count':()}):return
     data=np.load(REF/'data.npz');i0=data['names'].tolist().index('Neel_anchor');mu=np.load(MIN/'results/BANDS.npz')['mu'][1,0]
@@ -161,7 +161,7 @@ def reference(z,slab,dv,identity,st):
         q=(np.array(list(product(range(2),repeat=2)))+k[:2])/2;psi=np.array([slab[tuple(np.rint(v*8).astype(int)%8)] for v in q])
         if ki==0:
             fields=np.load(MIN/'results/FIELDS.npz')['DFT'][0];nin=np.load(MIN/'results/FIELDS.npz')['NDFT'][0][[0,2,1,3]]
-            h0,aa=load_operators(cached_operators(2,k,identity,st));_,vu=hubbard(nin)
+            h0,aa=load_operators(cached_operators(2,k,identity,st));_,vu=hubbard(nin,ueff)
             reconstructed=h0+fold_project(psi,grid_to_cells(fields,2),2)+sum(aa[j].conj().T@vu[j]@aa[j] for j in range(4))
             from density_map import Projection,indices,spin_matrix
             old=Projection.__new__(Projection);old.ix=indices(data['grid']);old.bits=bits;old.block=30;old.w=np.load(REF/f'wr_{ki+1:04}.npy',mmap_mode='r')
@@ -213,25 +213,27 @@ def wave_cache(L,z,identity,st,slab):
     save(SHARED/f'L{L:02}/metrics/z{z}.json',dict(points=checks))
     return paths,ops
 
-def value_offset(path: Path, length: int) -> float:
+def value_offset(path: Path, length: int, ueff: float) -> float:
     with path.open('rb') as stream:
         header = stream.read(128)
     if len(header) != 128:
         raise ValueError(f'Truncated coefficient header: {path}')
-    magic, *fields, model_id, _, offset = struct.unpack('<16s8i64s2d', header)
+    magic, *fields, model_id, coefficient_ueff, offset = struct.unpack('<16s8i64s2d', header)
     version, ncoeff, cell, sites, derivative = fields[:5]
     if (magic != b'LANIO2_COEFF_V2 ' or version != 1 or ncoeff < 1 or cell != length
             or sites != length**2 or derivative != 0 or model_id != CONFIG['model_id'].encode()
             or not np.isfinite(offset)):
         raise ValueError(f'Invalid value coefficient header: {path}')
+    if coefficient_ueff != ueff:
+        raise ValueError(f'Coefficient Ueff {coefficient_ueff} differs from model Ueff {ueff}: {path}')
     return offset
 
 
-def spectrum(L,case,z,paths,ops,rvr):
+def spectrum(L,case,z,paths,ops,rvr,ueff):
     p=folder(L,case);p.mkdir(parents=True,exist_ok=True)
     definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());sites=definition['angle_configurations'][case]['readout_sites_native_1based'];source=oldcase(L,case)
     batch=points(L,z)
-    coeff=source/'coeff/value.bin';offset=value_offset(coeff,L)
+    coeff=source/'coeff/value.bin';offset=value_offset(coeff,L,ueff)
     native_batch(coeff,np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin' for ki,_ in batch])
     for ki,k in batch:
         out=p/f'k_{ki:04}.npz'
@@ -275,19 +277,42 @@ def density_stage(L,case,z,paths,dv,ops):
     atomic_npz(out,density=acc,N=N,bare=bare,F=F,band=band,count=count,seconds=time.monotonic()-start)
     print('DENSITY_CASE',L,case,z,time.monotonic()-start,flush=True)
 
+def reference_sites(length):
+    x, y = np.indices((length, length))
+    return (2*(x % 2) + y % 2).ravel()
+
+
+def total_occupation(active, reference_n, length, case):
+    if active.shape != (length**2,10,10) or reference_n.shape != (4,10,10):
+        raise ValueError('Expected one active Ni shell per cell and four reference shells')
+    if 'global_spin_rotation_deg' in case:
+        x, y, z, w = global_spin_rotation(case).as_quat()
+        # U = w I - i (x,y,z)·sigma, in the up-d1..5, down-d1..5 ordering.
+        spinor = np.array([[w-1j*z, -y-1j*x], [y-1j*x, w+1j*z]])
+        rotation = np.kron(spinor, np.eye(5))
+        reference_n = rotation @ reference_n @ rotation.conj().T
+    return active + reference_n[reference_sites(length)]
+
+
 def assemble_density(L,case,dv):
     p=folder(L,case)
     if (valid_npz(p/'DENSITY.npz',{'N':(L*L,10,10)}) and valid_json(p/'ELECTRONIC.json',['F','band','bare','count'])
             and (p/'DENSITY.bin').is_file() and (p/'DENSITY.bin').stat().st_size==28+32*NG*L*L):return
-    rows=[np.load(p/f'density_z{i}.npz') for i in range(8)];bg=np.load(SHARED/'reference/background.npz');idx=np.array([(x%2)*2+y%2 for x,y in product(range(L),repeat=2)])
-    rho=sum(r['density'] for r in rows)+bg['density'][idx];N=sum(r['N'] for r in rows)+bg['N'][idx]
+    case_input=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text())['angle_configurations'][case]
+    rows=[np.load(p/f'density_z{i}.npz') for i in range(8)]
+    with np.load(SHARED/'reference/background.npz') as bg:
+        reference_density=bg['density']
+        if 'global_spin_rotation_deg' in case_input:
+            reference_density[...,1:] = reference_density[...,1:] @ global_spin_rotation(case_input).as_matrix().T
+        rho=sum(r['density'] for r in rows)+reference_density[reference_sites(L)]
+        N=total_occupation(sum(r['N'] for r in rows),bg['N'],L,case_input)
     charge=float(rho[:,:,0].sum()*dv)
     if not np.isfinite(rho).all() or not np.isfinite(N).all():raise ValueError('Nonfinite density or occupation')
     quality_check(abs(charge-41*L*L)<1e-6, f'L={L}, case={case}: charge={charge}; expected {41*L*L}')
     atomic_npz(p/'DENSITY.npz',N=N);write_density(p/'DENSITY.bin',cells_to_grid(rho,L),L)
     save(p/'ELECTRONIC.json',dict(charge=charge,charge_error=abs(charge-41*L*L),**{key:float(sum(r[key] for r in rows)) for key in ['bare','F','band','count']}))
 
-def native(L):
+def native(L,ueff):
     import tempfile
     out=R/f'L{L:02}/native';out.parent.mkdir(parents=True,exist_ok=True)
     identity={str(folder(L,i)/'DENSITY.bin'):input_digest(folder(L,i)/'DENSITY.bin') for i in range(11)}
@@ -320,12 +345,12 @@ def native(L):
             stage.rename(out)
     # Recreate these cheap summaries even if interruption followed native publication.
     for case in range(11):
-        p=folder(L,case);ee=np.loadtxt(out/f'case_{case:02}_ENERGY.dat');n=np.load(p/'DENSITY.npz')['N'];eu,_=hubbard(n);b=json.loads((p/'ELECTRONIC.json').read_text());terms=dict(band_free=b['F'],minus_active_potential=-b['band']+b['bare'],EH=ee[0]*RY,Exc=ee[1]*RY,minus_core=-ee[2]*RY,ionic_density=ee[6]*RY,EU=eu)
-        save(p/'ENERGY.json',dict(terms=terms,energy=sum(terms.values()),constant_reference_excluded=True))
+        p=folder(L,case);ee=np.loadtxt(out/f'case_{case:02}_ENERGY.dat');n=np.load(p/'DENSITY.npz')['N'];eu,_=hubbard(n,ueff);b=json.loads((p/'ELECTRONIC.json').read_text());terms=dict(band_free=b['F'],minus_active_potential=-b['band']+b['bare'],EH=ee[0]*RY,Exc=ee[1]*RY,minus_core=-ee[2]*RY,ionic_density=ee[6]*RY,EU=eu)
+        save(p/'ENERGY.json',dict(terms=terms,energy=sum(terms.values()),Ueff_eV=ueff,constant_reference_excluded=True))
 
-def potential_stage(L,case,z,paths,ops):
+def potential_stage(L,case,z,paths,ops,ueff):
     p=folder(L,case);mu=json.loads((p/'MU.json').read_text())['mu'];field=grid_to_cells(read_density(R/f'L{L:02}/native/case_{case:02}_TRUE.bin',L),L)*RY
-    nt=np.load(p/'DENSITY.npz')['N'];_,vu=hubbard(nt);numerator=0.;denominator=0.
+    nt=np.load(p/'DENSITY.npz')['N'];_,vu=hubbard(nt,ueff);numerator=0.;denominator=0.
     for ki,k in points(L,z):
         dest=p/f'adjoint_{ki:04}.npz'
         if valid_npz(dest,{'Ae':(60*L*L,60*L*L),'numerator':(),'denominator':()}):
@@ -336,7 +361,7 @@ def potential_stage(L,case,z,paths,ops):
         print('NATIVE_PROJECTED',L,case,ki,flush=True)
     save(p/f'alpha_z{z}.json',dict(numerator=numerator,denominator=denominator))
 
-def torque_stage(L,z,rvr,ops):
+def torque_stage(L,z,rvr,ops,ueff):
     definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());targets=[v['site_native_1based'] for v in definition['selected_shells'][0]['pairs']]
     for chunk in [list(range(0,4)),list(range(4,8)),list(range(8,11))]:
         entries=[];densities=[];ds=[]
@@ -344,6 +369,8 @@ def torque_stage(L,z,rvr,ops):
             p=folder(L,case);mu=json.loads((p/'MU.json').read_text())['mu'];al=[json.loads((p/f'alpha_z{i}.json').read_text()) for i in range(8)];alpha=sum(a['numerator'] for a in al)/sum(a['denominator'] for a in al)
             sites=[1] if case==0 or case>=7 else [1,*targets]
             derivs=[derivative(oldcase(L,case)/f'coeff/dsite_{s:04}.bin') for s in sites]
+            if any(d['Ueff'] != ueff for d in derivs):
+                raise ValueError(f'Derivative coefficient Ueff differs from model Ueff {ueff}: {oldcase(L,case)}')
             for ki,k in points(L,z):
                 dest=p/f'torque_k{ki:04}.npz'
                 if valid_npz(dest,{'Ae':(60*L*L,60*L*L),'numerator':(),'denominator':()}):continue
@@ -400,8 +427,13 @@ def main(z):
     R.mkdir(parents=True,exist_ok=True)
     SHARED.mkdir(parents=True,exist_ok=True)
     start_attempt(z)
-    check_regression();binding();assert frozen()==13
-    identity=cache_identity();bind_cache(identity)
+    check_regression();binding()
+    meta=frozen_metadata()
+    assert len(meta['files'])+1==13
+    ueff=meta['Ueff_eV']
+    if not np.isfinite(ueff) or ueff < 0:
+        raise ValueError(f'Invalid model Ueff: {ueff}')
+    identity=cache_identity();identity['Ueff_eV']=ueff;bind_cache(identity)
     spin_files={str(ROOT/f'inputs/L{L:02}'/name):input_digest(ROOT/f'inputs/L{L:02}'/name) for L in SIZES for name in ('structure.npz','CASE.json')}
     spin_files['native_binary']=input_digest(Path(ENERGY['native_binary']))
     for root in ENERGY.get('reuse_cases',{}).values():
@@ -413,8 +445,8 @@ def main(z):
     if z==0:(R/'COMPLETE.json').unlink(missing_ok=True)
     for L in SIZES:
         prepare_coefficients(L,z)
-    meta=json.loads((INTERFACE/'V_func_tmp/V_FUNC.json').read_text());dv=abs(np.linalg.det(np.array(meta['primitive_cell_A'])/.529177210903))/NG
-    slab=stage_bloch(z);st=static(OLD/'basis/pure_H0.au');reference(z,slab,dv,identity,st);background(z,dv)
+    dv=abs(np.linalg.det(np.array(meta['primitive_cell_A'])/.529177210903))/NG
+    slab=stage_bloch(z);st=static(OLD/'basis/pure_H0.au');reference(z,slab,dv,identity,st,ueff);background(z,dv)
     cached=CONFIG.get('rvr_slices',{}).get(str(z))
     if cached:
         rvr=Path(cached)
@@ -430,15 +462,15 @@ def main(z):
     for L in SIZES:
         paths,ops=wave_cache(L,z,identity,st,slab)
         for case in range(11):
-            spectrum(L,case,z,paths,ops,rvr);density_stage(L,case,z,paths,dv,ops);barrier(f'density_L{L}_c{case}',z)
+            spectrum(L,case,z,paths,ops,rvr,ueff);density_stage(L,case,z,paths,dv,ops);barrier(f'density_L{L}_c{case}',z)
             if z==0:assemble_density(L,case,dv)
         barrier(f'all_density_L{L}',z)
-        if z==0:native(L)
+        if z==0:native(L,ueff)
         barrier(f'native_L{L}',z)
-        for case in range(11):potential_stage(L,case,z,paths,ops)
-        barrier(f'potentials_L{L}',z);torque_stage(L,z,rvr,ops);barrier(f'torques_L{L}',z)
+        for case in range(11):potential_stage(L,case,z,paths,ops,ueff)
+        barrier(f'potentials_L{L}',z);torque_stage(L,z,rvr,ops,ueff);barrier(f'torques_L{L}',z)
         if z==0:collect(L)
-    if z==0:save(R/'COMPLETE.json',dict(V1_files_verified=frozen(),sizes=SIZES,J='J12 only'))
+    if z==0:save(R/'COMPLETE.json',dict(V1_files_verified=len(frozen_metadata()['files'])+1,sizes=SIZES,J='J12 only'))
 
 if __name__=='__main__':
     try:main(int(sys.argv[1]))
