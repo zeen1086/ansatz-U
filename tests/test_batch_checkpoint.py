@@ -2,6 +2,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import json
+import math
 import unittest
 from unittest.mock import patch
 import numpy as np
@@ -9,6 +10,7 @@ import numpy as np
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'7_spin'))
 import run_material
+import common
 
 
 class BatchCheckpointTest(unittest.TestCase):
@@ -79,3 +81,40 @@ class BatchCheckpointTest(unittest.TestCase):
             (self.root/'coeff').write_bytes(b'new spin')
             with self.assertRaisesRegex(ValueError,'inputs changed'):
                 run_material.native_batch(self.root/'coeff',self.k,self.out,self.root,2)
+
+
+class BandNumericsTest(unittest.TestCase):
+    def test_eigensystem_reuses_valid_cache_and_rebuilds_invalid_cache(self):
+        with TemporaryDirectory() as tmp:
+            folder=Path(tmp);(folder/'value').mkdir()
+            h=np.array([[.2,.1+.3j],[.1-.3j,-.4]],dtype='<c16')
+            h.ravel(order='F').tofile(folder/'value/H.k000001.h')
+            common.ensure_eigensystem(folder,2)
+            cache=folder/'eigensystem.npz'
+            original=cache.read_bytes()
+            with patch.object(common,'load_h',side_effect=AssertionError('valid cache reread Hamiltonian')):
+                common.ensure_eigensystem(folder,2)
+            self.assertEqual(cache.read_bytes(),original)
+            for damage in ('truncated','wrong_shape'):
+                with self.subTest(damage=damage):
+                    if damage=='truncated':cache.write_bytes(b'partial')
+                    else:np.savez(cache,e=np.zeros(1),v=np.ones((1,1)))
+                    with patch.object(common.np.linalg,'eigh',wraps=np.linalg.eigh) as solve:
+                        common.ensure_eigensystem(folder,2)
+                        self.assertEqual(solve.call_count,1)
+                    with np.load(cache) as data:
+                        np.testing.assert_allclose(data['e'],np.linalg.eigvalsh(h),atol=1e-15)
+                        np.testing.assert_allclose((data['v']*data['e'])@data['v'].conj().T,h,atol=1e-15)
+
+    def test_band_density_matches_independent_state_sum(self):
+        rng=np.random.default_rng(35)
+        v,_=np.linalg.qr(rng.normal(size=(4,4))+1j*rng.normal(size=(4,4)))
+        mu=.23;e=mu+common.SIGMA*np.array([-3.,-.2,.6,2.])
+        occupations=np.array([.5*math.erfc((ev-mu)/common.SIGMA) for ev in e])
+        expected=sum(f*np.outer(v[:,i],v[:,i].conj()) for i,f in enumerate(occupations))
+        free=sum(ev*f-common.SIGMA*math.exp(-((ev-mu)/common.SIGMA)**2)/(2*math.sqrt(math.pi))
+                 for ev,f in zip(e,occupations))
+        density,stats=common.band_density(e,v,mu)
+        np.testing.assert_allclose(density,expected,rtol=0,atol=1e-15)
+        self.assertAlmostEqual(stats['count'],sum(occupations),places=14)
+        self.assertAlmostEqual(stats['F'],free,places=14)

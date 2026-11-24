@@ -52,6 +52,21 @@ def load_h(path: Path, dimension: int) -> np.ndarray:
     return h
 
 
+def ensure_eigensystem(folder: Path, dimension: int) -> None:
+    path=folder/'eigensystem.npz'
+    if valid_npz(path, {'e':(dimension,), 'v':(dimension,dimension)}):return
+    e,v=np.linalg.eigh(load_h(folder/'value/H.k000001.h',dimension))
+    atomic_npz(path,e=e,v=v)
+
+
+def band_density(e: np.ndarray, v: np.ndarray, mu: float) -> tuple[np.ndarray, dict]:
+    x=(e-mu)/SIGMA
+    occ=.5*erfc(x)
+    density=(v*occ)@v.conj().T
+    stats=dict(count=occ.sum(),F=np.sum(e*occ-SIGMA*np.exp(-x*x)/(2*np.sqrt(np.pi))))
+    return density,stats
+
+
 def chemical_potential(e: np.ndarray, weights: np.ndarray, electrons: int) -> float:
     if e.ndim != 2 or weights.shape != (len(e),) or abs(weights.sum()-1) > 1e-9:
         raise ValueError('Expected all-k spectra and normalized k weights')

@@ -5,7 +5,7 @@ from itertools import product
 import numpy as np
 from scipy.optimize import brentq
 from density_map import NG,ws_weights,fold_unitary,fold_density,fold_project,cells_to_grid,grid_to_cells
-from complete_readout import static,operators,metric,fermi,loewner,hubbard,trace,RY,SIGMA
+from complete_readout import static,operators,metric,fermi,loewner,hubbard,trace,RY,SIGMA,curvature_result
 from native_input import input_file,write_density,read_density
 from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, quality_check, check_regression, shared_bundle
 from common import atomic_npz, valid_npz, valid_json, bind_inputs, archive_incomplete, input_digest
@@ -121,7 +121,6 @@ def cache_identity():
     for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py','native_input.py','kz_production.py'):
         files['code/'+name] = Path(__file__).with_name(name)
     files['code/spin_coordinates.py'] = SOURCE/'tools/spin_coordinates.py'
-    files['code/summarize_energy.py'] = Path(__file__).with_name('summarize_energy.py')
     files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
     return dict(version=1, files={name:input_digest(path) for name,path in files.items()},
                 model=CONFIG['model_id'],
@@ -423,7 +422,6 @@ def collect(L):
             raise ValueError('Torque modes or values do not match the requested case')
         rec.append(dict(sites=rows[0]['sites'].tolist(),torque=np.mean([r['torque'] for r in rows],axis=0).tolist()))
     if d.get('kind')=='K4':
-        from summarize_energy import curvature_result
         energies=[json.loads((folder(L,i)/'ENERGY.json').read_text())['energy'] for i in range(len(rec))]
         result=curvature_result(d,energies,[r['torque'] for r in rec])
         base=spin_structure(L,d['angle_configurations'][0])

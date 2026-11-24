@@ -8,10 +8,10 @@ import struct
 import time
 
 import numpy as np
-from scipy.special import erfc
 
-from common import CONFIG, WORK, SIGMA, chemical_potential, compute_node, load_h, quality_check, check_regression, save
+from common import CONFIG, WORK, chemical_potential, compute_node, quality_check, check_regression, save
 from common import atomic_npz, valid_npz, valid_json
+from common import ensure_eigensystem, band_density
 from run_material import binding, case_root, coefficients, native_batch, spin_structure, coefficient_identity, valid_coefficients, bind_case
 from torque_contract import contract_batch, derivative
 
@@ -115,10 +115,7 @@ def spectrum_sector(task,z,rvr):
         native_batch(p/'coeff/value.bin',k[batch],dirs,p,nd,rvr=rvr)
         # A single BLAS call can use all 16 cores for an eigensystem.
         for i in batch:
-            folder=p/f'k_{i:04}'
-            if valid_npz(folder/'eigensystem.npz',{'e':(nd,),'v':(nd,nd)}):continue
-            e,v=np.linalg.eigh(load_h(folder/'value/H.k000001.h',nd))
-            atomic_npz(folder/'eigensystem.npz',e=e,v=v)
+            ensure_eigensystem(p/f'k_{i:04}',nd)
 
 
 def spectrum_finish(task):
@@ -167,10 +164,8 @@ def torque_sector(tasks,z,rvr,pilot_root=None):
             with np.load(eig) as f:e,v=f['e'],f['v']
             if not np.array_equal(e,expected) or v.shape!=(nd,nd):
                 raise ValueError(f'Eigensystem mismatch: {eig}')
-            x=(e-mu)/SIGMA
-            occ=.5*erfc(x)
-            rho[slot]=(v*occ)@v.conj().T
-            stats.append(dict(count=occ.sum(), F=np.sum(e*occ-SIGMA*np.exp(-x*x)/(2*np.sqrt(np.pi)))))
+            rho[slot],point_stats=band_density(e,v,mu)
+            stats.append(point_stats)
             del v
         points=np.array([e[0] for e in block])
         ds=[e[3] for e in block]

@@ -11,10 +11,10 @@ import tempfile
 import time
 import numpy as np
 from scipy.spatial.transform import Rotation
-from scipy.special import erfc
-from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, SPINS, PYTHON, SIGMA, SOURCE
+from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, SPINS, PYTHON, SOURCE
 from common import compute_node, run, save, load_h, chemical_potential, check_regression, quality_check
 from common import atomic_npz, valid_npz, valid_json, archive_incomplete, bind_inputs, input_digest, arrays_digest
+from common import ensure_eigensystem, band_density
 from torque_contract import derivative,contract_batch
 sys.path.insert(0, str(SOURCE))
 from tools.spin_coordinates import chart_spins, tangent_basis, derivative_files
@@ -268,10 +268,7 @@ def spectra(length: int, index: int, mesh: int, step: float) -> None:
     energies=[None]*len(k);timing=[0.]*len(k);dimension=definition['dimension']
     def spectrum_k(ki):
         target=out/f'k_{ki:04}';tick=time.monotonic()
-        hfile=target/'value/H.k000001.h'
-        if not valid_npz(target/'eigensystem.npz',{'e':(dimension,),'v':(dimension,dimension)}):
-            h=load_h(hfile,dimension);e,v=np.linalg.eigh(h)
-            atomic_npz(target/'eigensystem.npz',e=e,v=v);del h,v
+        ensure_eigensystem(target,dimension)
         with np.load(target/'eigensystem.npz') as z: energies[ki]=z['e']
         timing[ki]=time.monotonic()-tick;print('SPECTRUM',length,index,ki,timing[ki],flush=True)
     for group in kz_groups(k):
@@ -304,10 +301,8 @@ def torque(length: int,index: int,mesh: int,step: float) -> None:
             point_stats=[]
             for slot,ki in enumerate(missing):
                 with np.load(out/f'k_{ki:04}/eigensystem.npz') as z: ev,vec=z['e'],z['v']
-                x=(ev-mu)/SIGMA
-                occ=.5*erfc(x)
-                densities[slot]=(vec*occ)@vec.conj().T
-                point_stats.append(dict(count=occ.sum(),F=np.sum(ev*occ-SIGMA*np.exp(-x*x)/(2*np.sqrt(np.pi)))))
+                densities[slot],stats=band_density(ev,vec,mu)
+                point_stats.append(stats)
                 del vec
             ts,im,measure=contract_batch(WORK/'RVR/B_general',WORK/'basis/pure_H0.au',k[missing,:3],
                                          densities,derivatives,workers=workers)

@@ -4,7 +4,7 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 
 | Check | Result |
 |---|---|
-| Repository offline suite | 98 passed; 1 MPI check skipped because the compiler and mpirun are unavailable |
+| Repository offline suite | 102 passed; 1 MPI check skipped because the compiler and mpirun are unavailable |
 | DFT input preparation | 26-state coverage, original sampling ranges, integer upper-hemisphere angles, seed repeatability, subset consistency, external pseudopotential paths, primitive-to-supercell generation, preserved parameters, isolated scratch, and invalid-input rejection passed |
 | SCF-to-V1 label package | Nine offline tests passed for complex N/order, source consistency, PBE, GGA branch, grid/cell, scalar gauge and atomic publication; real saved-state N/XML parsing passed. Native exporter syntax/interface and build dry-run checks passed; linking and running against actual QE libraries was not performed |
 | Single-response fit and spatial kernels | Twelve checks passed: label datasets/reference, complete joint-loss gradients, short synthetic fit, checkpoint/history recovery, direct bundle export, D4h fields and actual compiled native interpolation/window parity |
@@ -18,6 +18,7 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 | Actual V1 export → packaged runtime → synthetic RVR → native H/dH | Maximum error 9.155e-16 eV; all 15 compact/debug matrices identical |
 | Model format, packaged runtime, explicit output paths, cache identity, and restart checks | Passed |
 | Merged bundle loader and existing exported packages | Four-module exports and existing five-module layouts give identical synthetic p/N; missing loaders and mixed runtime modules are rejected; both layouts retain runtime identity checks |
+| Consolidated spin commands and shared band calculations | Import/help without calculation, selfcheck dispatch, K4 summary, eigensystem cache reuse/recovery, Gaussian density/free-energy parity, and changed source-identity rejection passed |
 
 The shared NPY parsing and byte-count checks, current numerical kernels, and compiled V1 weight values are preserved. Tests cover implementation consistency and reject unsupported model packages. They do not establish independent DFT accuracy, material-grid projection accuracy, or size/k-grid convergence. No new DFT or production calculation was run.
 
@@ -27,4 +28,4 @@ The label extractor reads complete complex N from native `occup.txt` and checks 
 
 The new fitter uses only the current single explicit response and starts from the label packages. Short synthetic optimization verifies that loss decreases and its bundle is accepted by the existing exporter, including unchanged predictions after export. Spatial kernels are learned within the configured finite A1g/B1g radial-polynomial span. No real-material fit or reproduction of the historical frozen kernels/accuracy was performed. Optimizer termination, gradient convergence and material accuracy remain separate results.
 
-See [7_spin](../7_spin/README.md#small-checks-and-native-regression) for test commands and [6_RVR](../6_RVR/README.md) for the required model export format. Model, basis, runtime, or input changes require matching data and fresh work directories.
+See [7_spin](../7_spin/README.md#5-restart-and-checks) for test commands and [6_RVR](../6_RVR/README.md) for the required model export format. Model, basis, runtime, or input changes require matching data and fresh work directories.

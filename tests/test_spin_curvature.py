@@ -17,7 +17,7 @@ from tools.spin_coordinates import CHART_KEYS, chart_spins, curvature_cases, der
 import local_vfunc
 import run_material
 import complete_energy
-import summarize_energy
+import complete_readout
 from torque_contract import derivative
 
 
@@ -70,7 +70,7 @@ class CurvatureTests(unittest.TestCase):
 
     def test_nonstationary_heisenberg_all_blocks_and_energy_stencil(self):
         energies, torques = self.samples()
-        result = summarize_energy.curvature_result(self.definition,energies,torques)
+        result = complete_readout.curvature_result(self.definition,energies,torques)
         expected = self.analytic()
         self.assertGreater(np.linalg.norm(result['tau0_eV_per_rad']),.1)
         np.testing.assert_allclose(result['K_eV_per_rad2'],expected,rtol=0,atol=2e-9)
@@ -89,7 +89,7 @@ class CurvatureTests(unittest.TestCase):
                 self.assertAlmostEqual(value,expected[a,b],delta=1e-7)
 
     def test_steps_reduce_error_and_geometry_changes_K_with_fixed_J(self):
-        result=summarize_energy.curvature_result(self.definition,*self.samples())
+        result=complete_readout.curvature_result(self.definition,*self.samples())
         errors=[np.max(abs(np.array(k)-self.analytic())) for k in result['K_steps_eV_per_rad2']]
         self.assertGreater(errors[2],3.5*errors[1])
         self.assertGreater(errors[1],3.5*errors[0])
@@ -105,7 +105,7 @@ class CurvatureTests(unittest.TestCase):
             self.base=np.array([[0.,0.,1.],[0.,0.,float(sign)]])
             self.basis=tangent_basis(self.base)
             self.definition.update(sites=self.sites,angle_configurations=curvature_cases(self.sites,self.steps))
-            result=summarize_energy.curvature_result(self.definition,*self.samples())
+            result=complete_readout.curvature_result(self.definition,*self.samples())
             np.testing.assert_allclose(result['K_eV_per_rad2'],self.analytic(),atol=1e-9)
             eigenvalues=np.linalg.eigvalsh(result['K_eV_per_rad2'])
             self.assertEqual(np.count_nonzero(abs(eigenvalues)<1e-8),2)
@@ -131,10 +131,10 @@ class CurvatureTests(unittest.TestCase):
             with self.assertRaises(ValueError):curvature_cases(sites,steps)
         with self.assertRaises(ValueError):
             chart_spins(self.base,np.array(self.sites),self.basis*2,np.zeros((2,2)))
-        with self.assertRaises(ValueError):summarize_energy.curvature_result(self.definition,[0.]*24,np.zeros((24,4)))
-        with self.assertRaises(ValueError):summarize_energy.curvature_result(self.definition,[0.]*25,np.full((25,4),np.nan))
+        with self.assertRaises(ValueError):complete_readout.curvature_result(self.definition,[0.]*24,np.zeros((24,4)))
+        with self.assertRaises(ValueError):complete_readout.curvature_result(self.definition,[0.]*25,np.full((25,4),np.nan))
         bad=dict(self.definition,angle_configurations=self.definition['angle_configurations'][::-1])
-        with self.assertRaises(ValueError):summarize_energy.curvature_result(bad,*self.samples())
+        with self.assertRaises(ValueError):complete_readout.curvature_result(bad,*self.samples())
 
     def test_evaluate_exports_both_directions_at_displaced_chart_point(self):
         eta=np.array([[.12,-.07],[.03,.09]])
@@ -250,8 +250,8 @@ class CurvatureTests(unittest.TestCase):
                 result=json.loads((root/'L02/RESULT.json').read_text())
                 np.testing.assert_allclose(result['K_eV_per_rad2'],self.analytic(),atol=2e-9)
                 self.assertFalse(result['physical_validation'])
-                with patch.object(summarize_energy,'ROOT',root),patch.dict(summarize_energy.CONFIG['complete_energy'],{'sizes':[2]}),patch('builtins.print'):
-                    summarize_energy.main()
+                with patch.dict(complete_readout.CONFIG['complete_energy'],{'work':str(root),'sizes':[2]}),patch('builtins.print'):
+                    complete_readout.summary()
                 np.testing.assert_allclose(np.loadtxt(root/'L02/K4_eV_per_rad2.csv',delimiter=','),self.analytic(),atol=2e-9)
                 np.savez(root/'L02/case_00/torque_k0000.npz',sites=labels[::-1],torque=torques[0],imaginary=0.)
                 with self.assertRaisesRegex(ValueError,'Torque modes'):

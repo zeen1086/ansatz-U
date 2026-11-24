@@ -16,10 +16,61 @@ import complete_readout
 import density_map
 import kz_production
 import native_input
-import summarize_energy
 
 
 class ProductionEnergyTest(unittest.TestCase):
+    def test_merged_commands_import_without_calculation_and_dispatch_selfchecks(self):
+        repo = Path(__file__).resolve().parents[1]
+        config = json.loads((repo/'examples/7_spin/production.json').read_text())
+        config.pop('complete_energy')
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'config.json'
+            path.write_text(json.dumps(config))
+            env = dict(os.environ, ANSATZ_RUN_CONFIG=str(path),
+                       PYTHONPATH=os.pathsep.join((str(repo), str(repo/'7_spin'))))
+            script = '''from pathlib import Path
+from unittest.mock import patch
+with patch.object(Path, 'mkdir', side_effect=AssertionError('created a directory')), \\
+     patch('subprocess.run', side_effect=AssertionError('launched a calculation')):
+    import native_input, complete_readout
+'''
+            subprocess.run([sys.executable, '-B', '-c', script], cwd=tmp, env=env,
+                           check=True, capture_output=True, text=True)
+            for name, command in (('native_input.py', 'check'), ('complete_readout.py', 'summary')):
+                result = subprocess.run([sys.executable, '-B', str(repo/'7_spin'/name), '--help'],
+                                        cwd=tmp, env=env, check=True, capture_output=True, text=True)
+                self.assertIn(command, result.stdout)
+            subprocess.run([sys.executable, '-B', str(repo/'7_spin/complete_readout.py'), 'selfcheck'],
+                           cwd=tmp, env=env, check=True, capture_output=True, text=True)
+            self.assertEqual(list(Path(tmp).iterdir()), [path])
+
+    def test_merged_sources_bind_cache_and_reject_changed_identity(self):
+        import complete_energy as driver
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reference, wannier = root/'reference', root/'wannier'
+            for folder in (reference/'results', reference/'inputs/reference_actual', wannier):
+                folder.mkdir(parents=True)
+            for name in ('basis/bloch.npy', 'basis/pure_H0.au', 'RVR/PROJECTION.json',
+                         'RVR/B_general', 'model/V_func_tmp/V_FUNC.json'):
+                path = root/name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b'identity fixture')
+            with patch.multiple(driver, WORK=root, INTERFACE=root/'model', REF=wannier,
+                                MIN=reference, SHARED=root):
+                identity = driver.cache_identity()
+                self.assertIn('code/complete_readout.py', identity['files'])
+                self.assertIn('code/native_input.py', identity['files'])
+                source_names = {name[5:] for name in identity['files'] if name.startswith('code/')}
+                spin_sources = {path.name for path in (Path(driver.__file__).parent).glob('*.py')}
+                self.assertTrue(source_names-{'spin_coordinates.py', 'frozen_io.f90', 'cal_Hsk.f90'} <= spin_sources)
+                driver.bind_cache(identity)
+                driver.bind_cache(identity)
+                changed = json.loads(json.dumps(identity))
+                changed['files']['code/complete_readout.py'] = 'changed source identity'
+                with self.assertRaisesRegex(ValueError, 'Shared inputs changed'):
+                    driver.bind_cache(changed)
+
     def test_external_config_and_reused_case_paths(self):
         repo = Path(__file__).resolve().parents[1]
         config = json.loads((repo/'examples/7_spin/production.json').read_text())
@@ -72,7 +123,7 @@ class ProductionEnergyTest(unittest.TestCase):
         complete_readout.energy_selfcheck()
         complete_readout.selfcheck()
         complete_readout.full_functional_selfcheck()
-        summarize_energy.selfcheck()
+        complete_readout.curvature_selfcheck()
         n = np.eye(10, dtype=complex)*.4
         n[1, 5], n[5, 1] = .04+.07j, .04-.07j
         direction = np.zeros_like(n)
