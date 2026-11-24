@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the six recovered V1 magnetic SCF inputs from a LaNiO2 SCF input; run no jobs."""
+"""Generate 26 magnetic SCF inputs using the V1 sampling rules; run no jobs."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,6 @@ import re
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
 BOHR_ANGSTROM = 0.529177210903
 NI_POSITIONS = np.array([[.25, .25, .5], [.75, .25, .5], [.25, .75, .5], [.75, .75, .5]])
 KEY = re.compile(r"([a-zA-Z][\w]*(?:\(\s*\d+(?:\s*,\s*\d+)*\s*\))?)\s*=")
@@ -19,10 +18,20 @@ MAGNETIC = re.compile(r"(?:starting_magnetization|angle1|angle2|constrain_specie
 CARDS = {'ATOMIC_SPECIES', 'ATOMIC_POSITIONS', 'CELL_PARAMETERS', 'K_POINTS', 'HUBBARD'}
 
 
-def configurations() -> dict[str, dict]:
+def configurations(seed: int = 0) -> dict[str, dict]:
     """Target polar/azimuthal angles in degrees, in the registered Ni order."""
-    # Original targets for ni56 and the 18 random states must be recovered before adding them.
+    if type(seed) is not int or seed < 0:
+        raise ValueError('The random seed must be a nonnegative integer')
+    rng = np.random.Generator(np.random.PCG64(seed))
     result = {'fm': dict(angles=[[0., 0.]] * 4, constrained=False)}
+    for name, phi in (('ni56_pp', 0.), ('ni56_pm', 180.)):
+        result[name] = dict(angles=[[5., 0.], [5., phi], [0., 0.], [0., 0.]], constrained=True)
+    for i in range(1, 10):
+        angles = np.column_stack((180 * rng.random(4), 360 * rng.random(4)))
+        result[f'cri3_full_{i:02}'] = dict(angles=angles.tolist(), constrained=True)
+    for i in range(1, 10):
+        angles = np.column_stack((rng.integers(0, 90, 4), rng.integers(0, 360, 4)))
+        result[f'seki_upper_{i:02}'] = dict(angles=angles.tolist(), constrained=True)
     for angle in (2, 6):
         for sign, phi in (('p', (0., 180.)), ('m', (180., 0.))):
             result[f'rel78_{sign}{angle}'] = dict(angles=[[0., 0.], [0., 0.], [angle, phi[0]], [angle, phi[1]]], constrained=True)
@@ -341,13 +350,19 @@ def render(base: dict, angles: list[list[float]], constrained: bool = True) -> t
     return '\n'.join(lines) + '\n', directions.tolist()
 
 
-def generate(scf: Path, output: Path, pseudo_dir: Path | None = None, cases: list[str] | None = None) -> dict:
+def generate(scf: Path, output: Path, pseudo_dir: Path | None = None, cases: list[str] | None = None, *, seed: int = 0) -> dict:
     if output.exists() or output.is_symlink():
         raise FileExistsError(f'Refusing existing output: {output}')
     source = scf.read_bytes()
-    pseudo_dir = (ROOT/'1_scf/pseudo' if pseudo_dir is None else pseudo_dir).resolve()
-    base = prepare(read_scf(source.decode()), pseudo_dir)
-    selected = configurations()
+    selected = configurations(seed)
+    parsed = read_scf(source.decode())
+    if pseudo_dir is None:
+        value = parsed['groups']['CONTROL'].get('pseudo_dir')
+        if value is None:
+            raise ValueError('Provide pseudo_dir in the base SCF input or use --pseudo-dir')
+        pseudo_dir = scf.resolve().parent / unquote(value)
+    pseudo_dir = pseudo_dir.resolve()
+    base = prepare(parsed, pseudo_dir)
     if cases is not None:
         if len(set(cases)) != len(cases) or not cases or any(name not in selected for name in cases):
             raise ValueError('Unknown, duplicate or empty configuration selection')
@@ -362,7 +377,9 @@ def generate(scf: Path, output: Path, pseudo_dir: Path | None = None, cases: lis
         records[name] = {'angles_degrees': angles, 'target_directions': directions, 'constrained': spec['constrained'],
                          'scf_sha256': hashlib.sha256(text.encode()).hexdigest()}
     record = dict(source_scf=str(scf.resolve()), source_sha256=hashlib.sha256(source).hexdigest(),
-                  target_coverage='six recovered states; not the complete 26-state training set',
+                  seed=seed, rng='numpy.Generator(PCG64)', numpy_version=np.__version__,
+                  sampling={'cri3_full': '9 states; four independent Ni; theta uniform [0,180), phi uniform [0,360) degrees',
+                            'seki_upper': '9 states; four independent Ni; integer theta 0..89, phi 0..359 degrees'},
                   initialization='atomic; no saved density or wavefunctions copied',
                   scratch='each case uses ./tmp for charge and wavefunctions; inherited wfcdir removed',
                   hubbard_source=base['hubbard_source'],
@@ -381,8 +398,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--scf', required=True, type=Path, help='preceding primitive or four-Ni SCF input')
     parser.add_argument('--output', required=True, type=Path, help='new directory for generated inputs')
-    parser.add_argument('--pseudo-dir', type=Path, help='default: bundled 1_scf/pseudo')
-    parser.add_argument('--cases', nargs='+', choices=list(configurations()), help='default: all six recovered configurations')
+    parser.add_argument('--pseudo-dir', type=Path, help='external pseudopotentials; default: pseudo_dir relative to the base SCF input')
+    parser.add_argument('--seed', type=int, default=0, help='nonnegative random seed (default: 0)')
+    parser.add_argument('--cases', nargs='+', choices=list(configurations()), help='default: all 26 configurations')
     args = parser.parse_args()
-    result = generate(args.scf, args.output, args.pseudo_dir, args.cases)
+    result = generate(args.scf, args.output, args.pseudo_dir, args.cases, seed=args.seed)
     print(f"Generated {len(result['configurations'])} SCF inputs; no calculations or submissions performed.")

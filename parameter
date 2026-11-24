@@ -3,7 +3,7 @@
 
 [paths]
 nscf_dir = "/explicit/external/case/5_wannier"
-pseudo_dir = "1_scf/pseudo"
+pseudo_dir = "/explicit/external/pseudopotentials"
 
 [model]
 nwan = 30

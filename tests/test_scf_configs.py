@@ -1,6 +1,5 @@
 """Input-generation checks; no QE executable or scientific payload is required."""
 import importlib.util
-import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -9,7 +8,7 @@ import unittest
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC = importlib.util.spec_from_file_location('generate_configs', ROOT/'1_scf/generate_configs.py')
+SPEC = importlib.util.spec_from_file_location('generate_configs', ROOT/'4_potential/generate_configs.py')
 configs = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(configs)
 
@@ -48,15 +47,6 @@ U Ni-3d 1.0
 
 
 class ScfConfigurationTests(unittest.TestCase):
-    def test_bundled_pseudopotentials_match_frozen_training_records(self):
-        expected = {
-            'La': '7a5b05be056c96292827043b6c564de17805566e789d043250c57bba1cd10c57',
-            'Ni': '07ac84022756676cfc9f0a328f68bd6b19c25876998ca0289ffb682092306946',
-            'O': '16c5996fd611f61de83ea416b5248967460ef668837ee05f5b8f3d3dfac79da2',
-        }
-        for name, digest in expected.items():
-            self.assertEqual(hashlib.sha256((ROOT/f'1_scf/pseudo/{name}.upf').read_bytes()).hexdigest(), digest)
-
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -67,6 +57,60 @@ class ScfConfigurationTests(unittest.TestCase):
             (self.pseudo/f'{name}.upf').write_text('test fixture\n')
         self.scf = self.root/'base.in'
         self.scf.write_text(BASE)
+
+    def test_sampling_rules_seed_and_fixed_patterns(self):
+        first = configs.configurations(seed=1729)
+        self.assertEqual(first, configs.configurations(seed=1729))
+        second = configs.configurations(seed=1730)
+        expected = (['fm', 'ni56_pp', 'ni56_pm']
+                    + [f'cri3_full_{i:02}' for i in range(1, 10)]
+                    + [f'seki_upper_{i:02}' for i in range(1, 10)]
+                    + ['rel78_p2', 'rel78_m2', 'rel78_p6', 'rel78_m6', 'Neel_anchor'])
+        self.assertEqual(list(first), expected)
+        for name, spec in first.items():
+            angles = np.asarray(spec['angles'])
+            self.assertEqual(angles.shape, (4, 2))
+            self.assertTrue(np.isfinite(angles).all())
+            if name.startswith(('cri3_full_', 'seki_upper_')):
+                self.assertNotEqual(spec, second[name])
+                self.assertEqual(len(set(map(tuple, angles))), 4)
+                self.assertTrue(np.all(angles >= 0))
+                self.assertTrue(np.all(angles[:, 1] < 360))
+                if name.startswith('cri3_full_'):
+                    self.assertTrue(np.all(angles[:, 0] < 180))
+                    self.assertTrue(np.any(angles != np.floor(angles)))
+                else:
+                    self.assertTrue(np.all(angles[:, 0] < 90))
+                    np.testing.assert_array_equal(angles, np.floor(angles))
+            else:
+                self.assertEqual(spec, second[name])
+            self.assertEqual(spec['constrained'], name != 'fm')
+        np.testing.assert_array_equal(first['ni56_pp']['angles'], [[5, 0], [5, 0], [0, 0], [0, 0]])
+        np.testing.assert_array_equal(first['ni56_pm']['angles'], [[5, 0], [5, 180], [0, 0], [0, 0]])
+        np.testing.assert_array_equal(first['rel78_m6']['angles'], [[0, 0], [0, 0], [6, 180], [6, 0]])
+
+    def test_relative_pseudopotentials_and_seeded_subset_match_full_generation(self):
+        self.scf.write_text(BASE.replace("pseudo_dir='/old/path/with/slash'", "pseudo_dir='pseudo'"))
+        manifest = configs.generate(self.scf, self.root/'all', seed=1729)
+        self.assertEqual(manifest['seed'], 1729)
+        self.assertIn('sampling', manifest)
+        self.assertEqual(len(list((self.root/'all').glob('*/scf.in'))), 26)
+        names = ['ni56_pm', 'cri3_full_04', 'seki_upper_09']
+        subset = configs.generate(self.scf, self.root/'subset', cases=names, seed=1729)
+        for name in names:
+            self.assertEqual((self.root/f'all/{name}/scf.in').read_text(),
+                             (self.root/f'subset/{name}/scf.in').read_text())
+            self.assertEqual(manifest['configurations'][name], subset['configurations'][name])
+            parsed = configs.read_scf((self.root/f'subset/{name}/scf.in').read_text())
+            self.assertEqual(configs.unquote(parsed['groups']['CONTROL']['pseudo_dir']),
+                             str(self.pseudo.resolve()))
+
+    def test_invalid_seed_is_rejected_before_writing(self):
+        for seed in (-1, 1.5, '2', True):
+            with self.subTest(seed=seed):
+                with self.assertRaises((TypeError, ValueError)):
+                    configs.generate(self.scf, self.root/'cases', self.pseudo, seed=seed)
+                self.assertFalse((self.root/'cases').exists())
 
     def test_primitive_expansion_preserves_settings_and_site_order(self):
         output = self.root/'cases'
@@ -145,7 +189,7 @@ class ScfConfigurationTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             configs.generate(self.scf, output, self.pseudo, ['fm'])
         self.assertEqual((output/'keep').read_text(), 'user data')
-        for cases in ([], ['unknown'], ['cri3_full_01'], ['ni56_pp'], ['fm', 'fm']):
+        for cases in ([], ['unknown'], ['fm', 'fm']):
             with self.assertRaises(ValueError):
                 configs.generate(self.scf, self.root/'new', self.pseudo, cases)
         self.assertFalse((self.root/'new').exists())

@@ -5,8 +5,8 @@ One supported workflow for the frozen LaNiO₂ V1 model: export existing weights
 | Directory | Contents |
 |---|---|
 | `0_QE` | QE 7.6 source modifications, installation, and build scripts |
-| `1_scf`–`3_band_no_mag` | Matched pseudopotentials, magnetic-input generation, and SCF/band templates |
-| `4_potential` | Potential extraction helpers; `local/` contains the frozen V1 inference sources |
+| `1_scf`–`3_band_no_mag` | Structure, SCF, and band input templates |
+| `4_potential` | Magnetic-configuration generation and potential extraction; `local/` contains the frozen V1 inference sources |
 | `5_wannier` | NSCF/Wannier templates and wavefunction/projector format conversion |
 | `6_RVR` | Current V1 local spatial-kernel projection, merging, and background/projector readers |
 | `7_spin` | V1 Hamiltonians, batch calculations, and complete-energy readout |
@@ -63,19 +63,30 @@ Set `ANSATZ_PARAMETER=/absolute/external/parameter` to select external preparati
 
 ### Magnetic DFT inputs
 
-The matched La/Ni/O pseudopotentials are included in [1_scf/pseudo](1_scf/pseudo/README.md). Their SHA256 values agree with the records for all 26 frozen V1 training states. The repository `parameter` selects this directory; external copies of `parameter` need its absolute path.
+Supply La/Ni/O pseudopotentials externally through `pseudo_dir` in the base SCF input or `--pseudo-dir`. Pseudopotentials and generated configuration files are not distributed in this repository. Relative `pseudo_dir` values are resolved against the base SCF input's directory.
 
 Generate magnetic configurations from the preceding SCF input:
 
 ```sh
-/path/to/existing/python 1_scf/generate_configs.py \
+/path/to/existing/python 4_potential/generate_configs.py \
   --scf /absolute/external/case/1_scf/scf.in \
+  --seed 0 \
   --output /absolute/external/magnetic_cases
 ```
 
 The generator expands a one-Ni primitive cell to 2×2×1, or accepts the registered four-Ni cell. It assigns separate Ni species, target directions and direction constraints, using the same Ni pseudopotential and ortho-atomic U=1 eV. It writes each `scf.in` and a `CONFIGURATIONS.json` provenance record to a new external directory. Generated case files are not repository inputs, and the command does not run or submit QE.
 
-Currently recovered targets are `fm`, `rel78_p2`, `rel78_m2`, `rel78_p6`, `rel78_m6`, and `Neel_anchor`. `fm` is unconstrained; the other five use direction constraints. Select a subset with `--cases`. Exact original targets for `ni56_pp`, `ni56_pm`, `cri3_full_01`–`09`, and `seki_upper_01`–`09` are still missing. The generator rejects those names and does not substitute new random samples. It therefore does not yet reproduce the complete 26-state DFT input set.
+The default set contains 26 configurations. `--seed` makes the random samples repeatable; selecting a subset with `--cases` preserves its samples for the same seed.
+
+| Configurations | Sampling rule |
+|---|---|
+| `fm`, `Neel_anchor` | Collinear FM and checkerboard Néel references |
+| `ni56_pp`, `ni56_pm` | Ni1/Ni2 tilted by 5° in the same/opposite x direction; Ni3/Ni4 along +z |
+| `cri3_full_01`–`09` | Four Ni sampled independently: theta uniform in [0,180°), phi uniform in [0,360°); uniform polar angle, not uniform solid angle |
+| `seki_upper_01`–`09` | Four Ni sampled independently: integer theta 0–89°, integer phi 0–359° |
+| `rel78_p2`, `rel78_m2`, `rel78_p6`, `rel78_m6` | Opposite x tilts of Ni3/Ni4 at 2° or 6°, with both sign orders |
+
+`fm` is unconstrained; the other 25 states use direction constraints. `CONFIGURATIONS.json` records the seed, random-number generator, sampling rules, target angles and directions, and source input identity. The random samples follow the original sampling rules; they are newly generated samples, not a reconstruction of historical angle lists.
 
 Cutoffs, smearing, convergence and mixing settings come from the supplied SCF input. Primitive-cell expansion halves the in-plane k mesh and scales explicit FFT dimensions and band counts. The archived four-Ni setup used a 7.9184×7.9184×3.3745 Å cell, 70/280 Ry cutoffs, 480 bands, Gaussian 0.01 Ry smearing, a 4×4×8 k mesh, no SOC, and a 0.1 direction-constraint strength. The generic preparation defaults are not a replacement for these archived numerical settings.
 
