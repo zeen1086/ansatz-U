@@ -10,7 +10,7 @@ import time
 import numpy as np
 from scipy.special import erfc
 
-from common import CONFIG, ROOT, WORK, SIGMA, chemical_potential, compute_node, load_h, quality_check, check_regression, save
+from common import CONFIG, WORK, SIGMA, chemical_potential, compute_node, load_h, quality_check, check_regression, save
 from common import atomic_npz, valid_npz, valid_json
 from run_material import binding, case_root, coefficients, native_batch, spin_structure, coefficient_identity, valid_coefficients, bind_case
 from torque_contract import contract_batch, derivative

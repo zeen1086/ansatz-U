@@ -30,7 +30,7 @@ The scalar constant above applies to the current frozen V1. Export with the orig
 
 The prediction rule is `N_single_response_to_v_B`: `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 + A(N0-N_ref))`, then `p = p0 + K(N1-N_ref)`, with `A = L K` compiled from the normalized coupled maps. Export accepts the original coupled V1 weights or a saved single-response model, without refitting.
 
-Exported packages must declare this `prediction_rule` and contain all six runtime files. Unsupported or incomplete packages are rejected. Generate a current package from the original V1 weights with `export`; use its matching model-bound RVR and fresh work directories. Checkpoint identities include the packaged runtime.
+Exported packages must declare this `prediction_rule` and contain the complete runtime listed by `local_vfunc.py`. Unsupported or incomplete packages are rejected. Generate a current package from the original V1 weights with `export`; use its matching model-bound RVR and fresh work directories. Checkpoint identities include the packaged runtime.
 
 ## 2. Prepare Projection Inputs
 

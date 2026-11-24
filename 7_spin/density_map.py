@@ -1,5 +1,4 @@
 """Common Wannier wave-function readout; preserve native cal_Hsk gauge and WS support."""
-from pathlib import Path
 from itertools import product
 import numpy as np
 
@@ -13,12 +12,6 @@ def ws_weights(q: np.ndarray) -> np.ndarray:
         samples=np.arange(8)/8
         weights.append(np.sum(end[:,None]*np.exp(2j*np.pi*rr[:,None]*(samples[None,:]-x)),axis=0)/8)
     return np.einsum('i,j,k->ijk',*weights)
-
-def bloch_at(path: Path,q: np.ndarray) -> np.ndarray:
-    src=np.load(path,mmap_mode='r');assert src.shape==(8,8,8,NG,30)
-    weights=ws_weights(q);out=np.zeros((NG,30),complex)
-    for idx in zip(*np.nonzero(abs(weights)>1e-13)):out+=weights[idx]*src[idx]
-    return out
 
 def cell_wave(bloch: np.ndarray,k: np.ndarray,L: int,cell: np.ndarray) -> np.ndarray:
     """One primitive-cell grid block, all supercell spatial orbitals (native x-major order)."""

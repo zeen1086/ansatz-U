@@ -147,7 +147,7 @@ make local-rvr BUILD=/absolute/intel-build FC=ifort \
   LIBS='-mkl=parallel'
 ```
 
-See the [local RVR interface](../6_RVR/README.md) for V1 model export and compatibility. New exports package the single-response model, loader and predictor with the frozen parameters and the feature, symmetry and field kernels from `--code`. Packages must declare `N_single_response_to_v_B` and include the complete runtime. Export the original coupled V1 weights with the current command to create a compatible package. Use fresh spin and complete-energy work paths when model or runtime inputs change.
+See the [local RVR interface](../6_RVR/README.md) for V1 model export and compatibility. New exports package the single-response model, loader and predictor with the frozen parameters and the feature and symmetry modules from `--code`. Packages must declare `N_single_response_to_v_B` and include the complete runtime. Export the original coupled V1 weights with the current command to create a compatible package. Use fresh spin and complete-energy work paths when model or runtime inputs change.
 
 Standalone `local_vfunc.py evaluate` generates only the production-required `value.bin/dsite_XXXX.bin` and `PREDICTION.json` by default. `prediction.npz`, which duplicates these arrays, is generated only with `--keep-intermediates`. Batch drivers retain coefficients, indices, and completion markers needed for restart; they do not apply the temporary-file cleanup used after the single-configuration `cal_Hsk` command.
 

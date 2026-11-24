@@ -411,7 +411,6 @@ def torque_stage(L,z,rvr,ops,ueff):
             save(R/f'L{L:02}/torque_batch_{z}_{chunk[0]}.json',stats)
 
 def collect(L):
-    import csv
     d=case_definition(L);rec=[]
     for case in range(len(d['angle_configurations'])):
         rows=[]

@@ -7,8 +7,7 @@ from pathlib import Path
 if __name__ == "__main__":
     root=Path(__file__).resolve().parent
     loader=unittest.TestLoader()
-    suite=loader.discover(str(root),pattern="test_configuration.py")
-    suite.addTests(loader.discover(str(root/"tests"),pattern="test_*.py",top_level_dir=str(root/"tests")))
+    suite=loader.discover(str(root/"tests"),pattern="test_*.py",top_level_dir=str(root/"tests"))
     result=unittest.TextTestRunner(verbosity=2).run(suite)
     print(f"Passed: {result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped)}; "
           f"failed: {len(result.failures)+len(result.errors)}; skipped: {len(result.skipped)}")

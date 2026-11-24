@@ -152,9 +152,3 @@ def contract_batch(rvr: Path, background: Path, points: np.ndarray, densities: n
     values = [-row.real for row in gradients]
     return (values if derivatives_by_point is not None else np.asarray(values)), imaginary, dict(
         rvr_blocks=block_count,rvr_bytes=block_count*block_bytes,rvr_read_and_validation_seconds=read_seconds)
-
-
-def contract(rvr: Path, background: Path, k: np.ndarray, rho: np.ndarray, derivatives: list[dict]):
-    """Compatibility interface for one k point."""
-    values, imaginary, _ = contract_batch(rvr,background,k[None],rho[None],derivatives)
-    return values[0], float(imaginary[0])

@@ -17,24 +17,6 @@ class Reference:
     p_spin: np.ndarray
     source: str                     # registered provenance, or explicit synthetic
 
-    @classmethod
-    def from_anchor(cls, N: np.ndarray, p_eV: np.ndarray, axis: np.ndarray,
-                    p_representation: np.ndarray, source: str) -> tuple[Reference, dict]:
-        """Declared axial/D4h averaging of a mapped single-Ni anchor; keep its residual."""
-        require(N.shape == (10, 10) and p_eV.ndim == 2 and p_eV.shape[1] == 4,
-                "anchor matrix/coefficient shapes")
-        finite(N, "anchor N"); finite(p_eV, "anchor p"); finite(axis, "anchor axis")
-        require(axis.shape == (3,) and abs(np.linalg.norm(axis)-1) < 1e-10, "unit anchor axis")
-        require(np.max(np.abs(N-N.conj().T)) < 1e-10, "Hermitian anchor required")
-        require(p_representation.shape == (16, len(p_eV), len(p_eV)), "anchor representation shape")
-        c = to_channels(N)
-        nr = REP["se"].mean(axis=0); pr = p_representation.mean(axis=0)
-        ref = cls(nr @ c["se"][:, 0], nr @ (c["vo"] @ axis),
-                  pr @ p_eV[:, 0], pr @ (p_eV[:, 1:] @ axis), source)
-        nfit, pfit = ref.values(axis[None], np.ones_like(p_eV))
-        return ref, dict(N_discarded_Frobenius=float(np.linalg.norm(N-nfit[0])),
-                         p_discarded_eV_norm=float(np.linalg.norm(p_eV-pfit[0])))
-
     def values(self, spins: np.ndarray, scale: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         n = {k: np.zeros((len(spins), a, c)) for k, (a, c) in SECTORS.items()}
         n["se"][:, :, 0] = self.n_scalar

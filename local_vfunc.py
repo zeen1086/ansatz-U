@@ -19,7 +19,7 @@ from spin_coordinates import CHART_KEYS, chart_spins, derivative_files
 SCHEMA = 'LANIO2_LOCAL_VFUNC_V2'
 PREDICTION_RULE = 'N_single_response_to_v_B'
 LOCAL_CODE = Path(__file__).resolve().parent/'4_potential/local'
-RUNTIME = ('features.py', 'symmetry.py', 'model.py', 'workflow.py', 'local_field.py', 'predict.py')
+RUNTIME = ('features.py', 'symmetry.py', 'model.py', 'workflow.py', 'predict.py')
 DATA = ('C_v_local.npy', 'C_B_local.npy', 'local_grid.npz', 'KERNELS.json',
         'model/model.json', 'model/parameters.npz')
 

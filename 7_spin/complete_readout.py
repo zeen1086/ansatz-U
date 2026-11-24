@@ -5,7 +5,6 @@ Active-space band energies require an explicit excluded-space contribution.
 from pathlib import Path
 import numpy as np
 from scipy.special import erfc
-from density_map import fold_unitary
 from common import quality_check
 RY=13.605693122994;SIGMA=.01*RY
 
