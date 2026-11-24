@@ -16,6 +16,25 @@ import complete_energy as energy
 
 
 class RestartProtocolTests(unittest.TestCase):
+    def test_runtime_identity_follows_selected_prediction_code(self):
+        from local_vfunc import LOCAL_CODE, PREDICTION_RULE, RUNTIME
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);model=root/'V_func_tmp';(model/'model').mkdir(parents=True)
+            (model/'model/model.json').write_text(json.dumps(dict(schema='LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2')))
+            (model/'V_FUNC.json').write_text('{}')
+            with patch.object(material,'INTERFACE',root):
+                self.assertEqual(material.prediction_identity(),
+                                 {f:common.input_digest(LOCAL_CODE/f) for f in RUNTIME})
+                (model/'runtime').mkdir()
+                for f in RUNTIME:(model/'runtime'/f).write_text('# embedded fixture\n')
+                (model/'V_FUNC.json').write_text(json.dumps(dict(prediction_rule=PREDICTION_RULE)))
+                before=material.prediction_identity()
+                (model/'runtime/model.py').write_text('# changed embedded model\n')
+                self.assertNotEqual(material.prediction_identity(),before)
+                (model/'V_FUNC.json').write_text(json.dumps(dict(prediction_rule='N_dir_to_v_B')))
+                with self.assertRaisesRegex(ValueError,'re-export'):
+                    material.prediction_identity()
+
     def test_completed_density_assembly_preserves_metadata_on_reentry(self):
         with tempfile.TemporaryDirectory() as tmp,patch.object(energy,'R',Path(tmp)),patch.object(energy,'NG',2):
             out=energy.folder(1,0);out.mkdir(parents=True)

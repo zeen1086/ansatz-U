@@ -8,6 +8,7 @@ from features import FeatureSpec
 from model import LocalModel, Reference
 from symmetry import REP, finite, require
 
+SINGLE_RESPONSE_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_SINGLE_RESPONSE_V1'
 ONE_WAY_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'
 COUPLED_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2'
 WARM_SCHEMAS = ('LANIO2_GEOMETRIC_FEEDBACK_V1', 'LANIO2_SEPARATE_LOCAL_GRID_FEEDBACK_V1')
@@ -31,10 +32,10 @@ class LossConfig:
 
 def save_model(model: LocalModel, directory: Path, training_record: dict | None = None) -> None:
     directory.mkdir(parents=True, exist_ok=False)
-    meta = dict(schema=ONE_WAY_SCHEMA, feature=asdict(model.spec),
+    meta = dict(schema=SINGLE_RESPONSE_SCHEMA, feature=asdict(model.spec),
                 p_scales=model.p_scales.tolist(), p_representation=model.prep.tolist(),
                 ueff=model.ueff, v_channels=getattr(model,'v_channels',model.np),
-                head_coordinates='N=sigmoid(Q0); p=p0+K(N-Nref)',
+                head_coordinates='N0=sigmoid(Q0); N=sigmoid(Q0+A(N0-Nref)); p=p0+K(N-Nref)',
                 feature_scales={k: v.tolist() for k, v in model.feature_scales.items()},
                 feature_transforms={k:v.tolist() for k,v in model.feature_transforms.items()},
                 p_feature_maps=None if model.p_feature_maps is None else {k:{p:a.tolist() for p,a in v.items()} for k,v in model.p_feature_maps.items()},
@@ -48,7 +49,7 @@ def save_model(model: LocalModel, directory: Path, training_record: dict | None 
 
 
 def _import_coupled_weights(model: LocalModel, data, meta: dict) -> None:
-    # Released weights store raw K. Recover its original normalization once, before dropping L.
+    # Preserve both effective maps before replacing the old L with A=L K.
     projected_k = model.occupation_to_field_maps()
     projected_l = {}
     k_norm_sq = l_norm_sq = 0.
@@ -67,6 +68,7 @@ def _import_coupled_weights(model: LocalModel, data, meta: dict) -> None:
     scale = min(1., np.sqrt(4*meta['rho']/norm_product)) if norm_product else 1.
     for sector, column, refname in (('se', 0, 'p_scalar'), ('vo', 1, 'p_spin')):
         model.params['K_' + sector] *= scale
+        model.params['A_' + sector] = scale**2 * projected_l[sector] @ projected_k['K_' + sector]
         if meta['schema'] in WARM_SCHEMAS:
             # Pre-V2 checkpoints stored the uncompensated occupation head.
             lmap = scale * projected_l[sector]
@@ -78,7 +80,11 @@ def _import_coupled_weights(model: LocalModel, data, meta: dict) -> None:
 def load_model(directory: Path, warm=False):
     meta = json.loads((directory/'model.json').read_text())
     schema = meta['schema']
-    require(schema in (ONE_WAY_SCHEMA, COUPLED_SCHEMA) or (warm and schema in WARM_SCHEMAS), 'unsupported model schema')
+    require(schema != ONE_WAY_SCHEMA,
+            'One-way archive lacks L; re-export from the original coupled model to recover its response')
+    require(schema in (SINGLE_RESPONSE_SCHEMA, COUPLED_SCHEMA) or (warm and schema in WARM_SCHEMAS), 'unsupported model schema')
+    require(schema not in WARM_SCHEMAS or meta.get('p_feature_maps') is None,
+            'warm model with p_feature_maps cannot be compensated exactly')
     ref = Reference(**{k: v if k == 'source' else np.array(v)
                        for k, v in meta['reference'].items()})
     args = (FeatureSpec(**meta['feature']), np.array(meta['p_scales']), ref, meta.get('rho'))
@@ -89,14 +95,17 @@ def load_model(directory: Path, warm=False):
     if meta.get('p_feature_maps') is not None:model.p_feature_maps={k:{p:np.array(a) for p,a in v.items()} for k,v in meta['p_feature_maps'].items()}
     with np.load(directory/'parameters.npz', allow_pickle=False) as data:
         expected = set(model.params)
-        if schema != ONE_WAY_SCHEMA:
+        if schema != SINGLE_RESPONSE_SCHEMA:
+            expected.difference_update(('A_se', 'A_vo'))
             expected.update(('L_se', 'L_vo'))
         require(set(data.files) == expected, 'model parameter keys mismatch')
         for key, value in model.params.items():
+            if key.startswith('A_') and schema != SINGLE_RESPONSE_SCHEMA:
+                continue
             a = data[key]
             require(a.shape == value.shape and a.dtype == np.float64, f'parameter shape/type: {key}')
             finite(a, key); model.params[key] = a.copy()
-        if schema != ONE_WAY_SCHEMA:
+        if schema != SINGLE_RESPONSE_SCHEMA:
             _import_coupled_weights(model, data, meta)
     return model
 

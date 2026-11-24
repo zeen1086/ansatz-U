@@ -1,4 +1,4 @@
-"""Frozen V1 parameters and one-way predictions for the native local RVR chain."""
+"""Frozen V1 parameters and single-response predictions for the native local RVR chain."""
 from __future__ import annotations
 
 import argparse
@@ -17,7 +17,7 @@ import numpy as np
 from spin_coordinates import CHART_KEYS, chart_spins, derivative_files
 
 SCHEMA = 'LANIO2_LOCAL_VFUNC_V2'
-PREDICTION_RULE = 'N_dir_to_v_B'
+PREDICTION_RULE = 'N_single_response_to_v_B'
 LOCAL_CODE = Path(__file__).resolve().parent/'4_potential/local'
 RUNTIME = ('features.py', 'symmetry.py', 'model.py', 'workflow.py', 'local_field.py', 'predict.py')
 DATA = ('C_v_local.npy', 'C_B_local.npy', 'local_grid.npz', 'KERNELS.json',
@@ -32,9 +32,12 @@ def save(path: Path, value: dict) -> None:
 def runtime_path(directory: Path, meta: dict) -> Path:
     rule = meta.get('prediction_rule')
     if rule is None:  # Legacy packages embed the retired iterative evaluator.
+        schema = json.loads((directory/'model/model.json').read_text())['schema']
+        if schema != 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2':
+            raise ValueError('Legacy export requires coupled weights with L; re-export from the original coupled source')
         return LOCAL_CODE
     if rule != PREDICTION_RULE:
-        raise ValueError(f'Unsupported prediction rule: {rule}')
+        raise ValueError(f'Unsupported prediction rule: {rule}; re-export from the original coupled source')
     return (directory/'runtime').resolve()
 
 
@@ -51,14 +54,16 @@ def runtime(directory: Path, meta: dict | None = None):
 
 def export(source: Path, code: Path, structure: Path, output: Path,
            scalar_offset_eV: float) -> dict:
-    """Copy frozen weights and package the one-way inference code with native geometry."""
+    """Copy frozen weights and package single-response inference with native geometry."""
     source, code, output = source.resolve(), code.resolve(), output.absolute()
     if output.exists() or output.is_symlink():
         raise FileExistsError(f'Refusing to replace existing model: {output}')
     if not np.isfinite(scalar_offset_eV):
         raise ValueError('Finite, fixed scalar energy offset required')
     meta = json.loads((source/'model/model.json').read_text())
-    if meta['schema'] not in ('LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2', 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'):
+    if meta['schema'] == 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1':
+        raise ValueError('One-way weights discarded L; re-export from the original coupled source')
+    if meta['schema'] not in ('LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2', 'LANIO2_ACTIVE_LOCAL_GRID_SINGLE_RESPONSE_V1'):
         raise ValueError('Unsupported active-channel source model')
     with np.load(structure, allow_pickle=False) as z:
         cell, positions, species, ni = (z[k].copy() for k in ('cell','positions','species','ni'))
@@ -136,6 +141,7 @@ def metadata(directory: Path) -> dict:
 
 def verify(directory: Path) -> dict:
     meta = metadata(directory)
+    runtime_path(directory, meta)
     for name, expected in meta['files'].items():
         path=directory/name
         if not path.is_file() or (isinstance(expected,dict) and path.stat().st_size!=expected['bytes']):

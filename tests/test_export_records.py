@@ -29,6 +29,9 @@ class ExportRecordTests(unittest.TestCase):
             self.assertEqual(api.runtime_path(model,meta), (model/'runtime').resolve())
             self.assertEqual((model/'runtime/model.py').read_bytes(),(api.LOCAL_CODE/'model.py').read_bytes())
             self.assertEqual(api.runtime_path(model,{}),api.LOCAL_CODE)
+            self.assertEqual(meta['prediction_rule'],'N_single_response_to_v_B')
+            with self.assertRaisesRegex(ValueError,'re-export from the original coupled source'):
+                api.runtime_path(model,dict(prediction_rule='N_dir_to_v_B'))
             self.assertTrue(all(set(v)=={'bytes'} for v in meta['files'].values()))
             bg=root/'background';bg.write_bytes(b'fixture')
             Path(str(bg)+'.json').write_text(json.dumps(dict(kind='pure_H0_no_local_fields_no_HU',background_id='fixture')))
@@ -39,6 +42,18 @@ class ExportRecordTests(unittest.TestCase):
             record=json.loads((args.output/'PROJECTION.json').read_text())
             self.assertEqual(set(record),{'model_id','Wannier_files','translations_bytes','kz','background_id','grid_weight','nwan','source_background','basis_id','status','native_projection','projected_center_translations','projected_payload_bytes'})
             self.assertEqual(len(record['basis_id']),64)
+            source_meta=json.loads((source/'model/model.json').read_text())
+            source_meta['schema']='LANIO2_ACTIVE_LOCAL_GRID_SINGLE_RESPONSE_V1'
+            (source/'model/model.json').write_text(json.dumps(source_meta))
+            api.export(source,code,structure,root/'single-response',0.)
+            source_meta['schema']='LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'
+            (source/'model/model.json').write_text(json.dumps(source_meta))
+            with self.assertRaisesRegex(ValueError,'discarded L'):
+                api.export(source,code,structure,root/'one-way',0.)
+            self.assertFalse((root/'one-way').exists())
+            (model/'model/model.json').write_text(json.dumps(source_meta))
+            with self.assertRaisesRegex(ValueError,'coupled weights with L'):
+                api.runtime_path(model,{})
             (model/'C_v_local.npy').write_bytes(b'broken')
             with self.assertRaisesRegex(ValueError,'truncated'):api.verify(model)
 

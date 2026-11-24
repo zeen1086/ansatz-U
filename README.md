@@ -14,7 +14,7 @@ Fortran tools for LaNiO₂ potential fitting, Wannier/RVR processing, Hamiltonia
 
 ## Current V1 workflow
 
-At fixed geometry, the frozen iteration-30 V1 weights predict the full complex occupation once, `N_dir = sigmoid(Q0)`. The scalar and magnetic coefficients are `p = p0 + K(N_dir - N_ref)`; the Hamiltonian uses `VU = Ueff (I/2 - N_dir)`. Projecting its occupied states gives a separate output occupation. See the [native RVR guide](6_RVR/README.md) for commands.
+At fixed geometry, the frozen iteration-30 V1 weights use one explicit occupation response: `N0 = sigmoid(Q0)`, then `N1 = sigmoid(Q0 + A(N0 - N_ref))`, with the normalized maps compiled into `A = L K`. The scalar and magnetic coefficients are `p = p0 + K(N1 - N_ref)`; the Hamiltonian uses `VU = Ueff (I/2 - N1)`. There is no fixed-point iteration or refit. Projecting its occupied states gives a separate output occupation. See the [native RVR guide](6_RVR/README.md) for export compatibility and commands.
 
 ```text
 local_vfunc.py export / export-background

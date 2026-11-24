@@ -1,4 +1,4 @@
-"""Real exported V1 -> one-way prediction -> native H/dH with explicit synthetic RVR."""
+"""Real exported V1 -> single-response prediction -> native H/dH with synthetic RVR."""
 from pathlib import Path
 import argparse
 import json
@@ -65,7 +65,7 @@ def main(args):
     assert all((r/'compact'/name).read_bytes()==(r/'output'/name).read_bytes() for name in matrices)
     for label in ('value','dsite_0001','dsite_0002'):
         assert report['native_indices'][label]==(r/'output'/f'{label}.index').read_text().splitlines()
-    assert report['prediction_rule']=='N_dir_to_v_B'
+    assert report['prediction_rule']=='N_single_response_to_v_B'
     result=dict(status='PASS',errors_eV=errors,real_V1=True,prediction_rule=report['prediction_rule'],
                 native_assembly=True,projection_basis='synthetic known-answer fixture',
                 compact_vs_debug_identical_matrices=len(matrices),compact_indices_preserved=True,

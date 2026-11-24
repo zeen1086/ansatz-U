@@ -1,4 +1,4 @@
-"""One-way local model: the occupation head feeds the scalar and magnetic fields."""
+"""One explicit local occupation response, followed by scalar and magnetic fields."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -123,6 +123,7 @@ class LocalModel:
         for k in ("se", "vo"):
             self.params[f"b_Q_{k}"] = np.zeros(15)
             self.params[f"K_{k}"] = np.zeros((self.np, 15))
+            self.params[f"A_{k}"] = np.zeros((15, 15))
 
     def zero_grads(self, active=None) -> dict[str, np.ndarray]:
         return {k: np.zeros_like(v) for k, v in self.params.items() if active is None or k in active}
@@ -145,6 +146,10 @@ class LocalModel:
     def occupation_to_field_maps(self) -> dict[str, np.ndarray]:
         return {f"K_{k}": np.einsum("gab,bc,gdc->ad", self.prep, self.params[f"K_{k}"], REP[k])
                 / len(self.prep) for k in ("se", "vo")}
+
+    def occupation_response_maps(self) -> dict[str, np.ndarray]:
+        return {f"A_{k}": np.einsum("gab,bc,gdc->ad", REP[k], self.params[f"A_{k}"], REP[k])
+                / len(REP[k]) for k in ("se", "vo")}
 
     def _head(self, name: str, z: dict, spins: np.ndarray) -> dict:
         if name=='p':z=self.field_features(z)
@@ -185,6 +190,14 @@ class LocalModel:
         return LocalModel.pack_p({k: np.einsum("ab,nbc->nac", maps[f"K_{k}"], nc[k])
                                   for k in ("se", "vo")})
 
+    @staticmethod
+    def _A(maps: dict, n: np.ndarray) -> np.ndarray:
+        nc = to_channels(n)
+        response = {k: np.zeros_like(v) for k, v in nc.items()}
+        for k in ("se", "vo"):
+            response[k] = np.einsum("ab,nbc->nac", maps[f"A_{k}"], nc[k])
+        return to_matrix(response)
+
     def predict(self, structure: Structure, *, auxiliary: bool = False,
                 tolerance: float = 1e-10, max_iterations: int = 100,
                 prepared_features: dict[str, np.ndarray] | None = None,
@@ -202,13 +215,18 @@ class LocalModel:
             phi[k] = raw[k] if normalized else np.einsum('ngrc,rj->ngjc',raw[k]/scale[None,None,:,None],self.feature_transforms[k])
         p0 = self.pack_p(self._head("p", phi, structure.spins))
         q0 = to_matrix(self._head("Q", phi, structure.spins))
-        n, sigmoid_cache = matrix_sigmoid(q0)
+        n0, initial_cache = matrix_sigmoid(q0)
         nr, _ = self.reference.values(structure.spins, self.scale)
         maps = self.occupation_to_field_maps()
+        maps.update(self.occupation_response_maps())
+        initial_delta = n0 - nr
+        n, sigmoid_cache = matrix_sigmoid(q0 + self._A(maps, initial_delta))
         delta = n - nr
         p = p0 + self._K(maps, delta)
         finite(p, "predicted field coefficients")
-        cache = dict(phi=phi, spins=structure.spins.copy(), maps=maps, sigmoid=sigmoid_cache, delta=delta)
+        cache = dict(phi=phi, spins=structure.spins.copy(), maps=maps,
+                     initial_sigmoid=initial_cache, initial_delta=initial_delta,
+                     sigmoid=sigmoid_cache, delta=delta)
         return Prediction(p, n, self.ueff*(np.eye(10)/2 - n), None, True, 0, 0., 0., 0., cache)
 
     def physical_p(self, prediction: Prediction) -> np.ndarray:
@@ -216,7 +234,7 @@ class LocalModel:
 
     def backward(self, pred: Prediction, gp: np.ndarray, gn: np.ndarray,
                  gaux: np.ndarray | None = None, *, active=None) -> dict[str, np.ndarray]:
-        """Propagate the field loss through K and N, then through the occupation head."""
+        """Differentiate both sigmoid evaluations and the explicit A response."""
         require(gaux is None, "direct model has no auxiliary density loss")
         cache, out = pred.cache, self.zero_grads(active)
         field_grad = self.split_p(gp)
@@ -229,6 +247,16 @@ class LocalModel:
                 g_map = np.einsum("nac,nbc->ab", g, delta[k])
                 out[key] += np.einsum("gab,ad,gdc->bc", self.prep, g_map, REP[k]) / len(self.prep)
         gq = sigmoid_pullback(cache["sigmoid"], to_matrix(occupation_grad))
+        response_grad = to_channels(gq)
+        initial_delta = to_channels(cache["initial_delta"])
+        initial_grad = {k: np.zeros_like(v) for k, v in response_grad.items()}
+        for k in ("se", "vo"):
+            key = f"A_{k}"
+            initial_grad[k] = np.einsum("ab,nac->nbc", cache["maps"][key], response_grad[k])
+            if key in out:
+                g_map = np.einsum("nac,nbc->ab", response_grad[k], initial_delta[k])
+                out[key] += np.einsum("gab,ad,gdc->bc", REP[k], g_map, REP[k]) / len(REP[k])
+        gq += sigmoid_pullback(cache["initial_sigmoid"], to_matrix(initial_grad))
         self._head_pullback("p", field_grad, cache, out)
         self._head_pullback("Q", to_channels(gq), cache, out)
         return out

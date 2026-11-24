@@ -1,5 +1,24 @@
 # Validation Summary
 
+## Single explicit occupation response — 2026-11-24
+
+The current evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 + A(N0-N_ref))`, and `p = p0 + K(N1-N_ref)`. Loading coupled V1 weights compiles the projected, normalized maps into `A = L K`; the source weights are not refitted. Saved single-response models store A directly.
+
+| Check | Result |
+|---|---|
+| Repository offline suite | 70 passed; 1 skipped because the MPI compiler and mpirun are unavailable |
+| Nonzero A, both sigmoid evaluations, full complex N, SO(3)/time reversal, occupation bounds, and parameter directional derivatives | Passed; includes Q, p, K, A and their applicable biases |
+| Legacy projected/normalized K/L import, warm-head compensation, saved-model roundtrip, and incompatible one-way archive rejection | Passed |
+| Release evaluator against the independent one-update audit on 60 frozen-weight inputs | Maximum coefficient difference 7.07e-16 eV; N element difference 3.45e-15; saved-model predictions bitwise identical |
+| Clean external `make local-rvr` and real frozen V1 export → synthetic RVR → native H/dH | Passed; H difference 9.16e-16 eV and angular-derivative difference 3.54e-18 eV/rad; all 15 compact/debug matrices identical |
+| Runtime identity and existing two-site spin-curvature regressions | Passed; the new runtime invalidates old prediction checkpoints |
+
+The 60 inputs comprise 26 previously seen states, 8 additional random four-Ni states, 24 angular perturbations, and two 16-Ni states (periodic repetition and random spins). The prior independent audit compared the selected one-update function with the accepted old fixed point: on the 26 seen states, the original-weight RMS differences were 2.24e-7 meV for v, 9.40e-6 meV for vector B, and 2.58e-9 per N element. These are model-to-model comparisons, not independent DFT accuracy measurements.
+
+The local records are `current/audits/V1_effective_response_20261124_r01/` and `current/validation/V1_single_response_release_20261124_r01/` in the research workspace, outside this source repository. No new DFT, full material-grid projection, or large-supercell production was run for this replacement. Use fresh coefficient/energy work paths; see [export compatibility](6_RVR/README.md).
+
+## Historical interfaces
+
 The local, tensor, and `joint` RVR tables below are historical validation records for the [pre-cleanup code](https://github.com/zeen1086/ansatz-U/tree/3e1307ac721e91a66eb3851dae2df6bc4c9c99e1). These legacy entry points were retired on 2026-11-16; “current entry” and `make all` in the tables refer to that version. See [6_RVR](6_RVR/README.md) for the current V1 cleanup regression and [production](7_spin/README.md) for production readout tests.
 
 | Check | Result |

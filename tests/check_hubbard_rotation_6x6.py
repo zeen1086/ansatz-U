@@ -130,7 +130,7 @@ def run(runs: Path, scratch: Path) -> dict:
         "global_spin_rotation_deg": rotated_case["global_spin_rotation_deg"],
         "active_source": "sum of N from density_z0.npz through density_z7.npz",
         "rotated_active_source": "explicit spinor rotation of archived active occupation",
-        "model_source": "fresh one-way predictions for both structures, compared with archived coupled coefficients",
+        "model_source": "fresh single-response predictions for both structures, compared with archived coupled coefficients",
         "model_original_vs_checkpoint_N_max": archived_model_error,
         "model_original_vs_checkpoint_V_max_eV": archived_potential_error,
         "model_rotation_N_max": n_model_error, "model_rotation_V_max_eV": v_model_error,
