@@ -1,14 +1,45 @@
-"""Summarize completed J12 and check native energy curvature against full torque."""
+"""Summarize J12 or two-site K4, retaining raw curvature and consistency errors."""
 from pathlib import Path
 import csv
 import json
 import math
+import numpy as np
 
 from common import CONFIG
 ROOT = Path(CONFIG['complete_energy']['work'])
 
 def richardson(a, b):
     return (4*a-b)/3
+
+def curvature_result(definition, energy, torque):
+    from spin_coordinates import curvature_cases
+    steps=definition['outer_steps_rad'];sites=definition['sites']
+    if definition['angle_configurations'] != curvature_cases(sites,steps):
+        raise ValueError('Curvature probe order differs from the fixed chart stencil')
+    energy=np.asarray(energy,dtype=float);torque=np.asarray(torque,dtype=float)
+    if (energy.shape!=(25,) or torque.shape!=(25,4)
+            or not np.isfinite(energy).all() or not np.isfinite(torque).all()):
+        raise ValueError('K4 requires 25 finite energies and four torques per case')
+    h=np.asarray(steps)
+    t=torque[1:].reshape(3,4,2,4)
+    ks=(-(t[:,:,0,:]-t[:,:,1,:])/(2*h[:,None,None])).transpose(0,2,1)
+    e=energy[1:].reshape(3,4,2)
+    diagonal=(e[:,:,0]+e[:,:,1]-2*energy[0])/h[:,None]**2
+    k=richardson(ks[0],ks[1]);ed=richardson(diagonal[0],diagonal[1])
+    return dict(kind='K4',coordinates='fixed_exponential_chart',sites=sites,
+                modes=[[s,a] for s in sites for a in (1,2)],outer_steps_rad=steps,
+                inner_step_rad=definition['inner_step_rad'],F0_eV=float(energy[0]),
+                tau0_eV_per_rad=torque[0].tolist(),K_eV_per_rad2=k.tolist(),
+                K_steps_eV_per_rad2=ks.tolist(),
+                step_indicator_eV_per_rad2=abs(k-richardson(ks[1],ks[2])).tolist(),
+                antisymmetric_residual_eV_per_rad2=(k-k.T).tolist(),
+                max_reciprocity_error_eV_per_rad2=float(np.max(abs(k-k.T))),
+                energy_diagonal_steps_eV_per_rad2=diagonal.tolist(),
+                energy_diagonal_eV_per_rad2=ed.tolist(),
+                energy_torque_diagonal_error_eV_per_rad2=abs(ed-np.diag(k)).tolist(),
+                energy_diagonal_step_indicator_eV_per_rad2=abs(ed-richardson(diagonal[1],diagonal[2])).tolist(),
+                energies_eV=energy.tolist(),torques_eV_per_rad=torque.tolist(),
+                coverage=np.ones((4,4),dtype=bool).tolist(),symmetrized=False)
 
 def check_curvature(energy, torque):
     ec, tc = [], []
@@ -31,12 +62,19 @@ def selfcheck():
 
 def main():
     selfcheck()
-    rows=[]
+    rows=[];curvatures=[]
     for L in CONFIG['complete_energy']['sizes']:
         root=ROOT/f'L{L:02}'
         if not (root/'RESULT.json').exists():
             continue
         result=json.loads((root/'RESULT.json').read_text())
+        if result.get('kind')=='K4':
+            labels=','.join(f'site{s}_a{a}' for s,a in result['modes'])
+            np.savetxt(root/'K4_eV_per_rad2.csv',result['K_eV_per_rad2'],delimiter=',',header=labels)
+            curvatures.append(dict(L=L,modes=result['modes'],K_eV_per_rad2=result['K_eV_per_rad2'],
+                                   max_reciprocity_error_eV_per_rad2=result['max_reciprocity_error_eV_per_rad2'],
+                                   physical_validation=False))
+            continue
         energies=[json.loads((root/f'case_{i:02}/ENERGY.json').read_text()) for i in range(11)]
         torques=[r['torque'][r['sites'].index(1)] for r in result['torques']]
         checks=check_curvature([e['energy'] for e in energies],torques)
@@ -52,7 +90,7 @@ def main():
     if rows:
         with (ROOT/'J12_by_size.csv').open('w',newline='') as stream:
             writer=csv.DictWriter(stream,fieldnames=list(rows[0]));writer.writeheader();writer.writerows(rows)
-    print(json.dumps(rows,indent=2))
+    print(json.dumps(rows+curvatures,indent=2))
 
 if __name__=='__main__':
     main()

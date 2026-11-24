@@ -14,6 +14,7 @@ import subprocess
 import sys
 
 import numpy as np
+from spin_coordinates import CHART_KEYS, chart_spins, derivative_files
 
 SCHEMA = 'LANIO2_LOCAL_VFUNC_V2'
 PREDICTION_RULE = 'N_dir_to_v_B'
@@ -294,7 +295,8 @@ def write_coeff(path: Path, meta: dict, length: int, p: np.ndarray, n: np.ndarra
 
 
 def evaluate(directory: Path, structure: Path, output: Path,
-             derivative_sites: list[int], step: float, *, keep_intermediates: bool=False) -> dict:
+             derivative_sites: list[int], step: float, *, keep_intermediates: bool=False,
+             tangent: bool=False) -> dict:
     meta = metadata(directory)
     if meta['schema'] != SCHEMA or step <= 0 or not np.isfinite(step):
         raise ValueError('Invalid package or derivative step')
@@ -303,6 +305,18 @@ def evaluate(directory: Path, structure: Path, output: Path,
     s, length, order = read_structure(structure, meta, features)
     if len(set(derivative_sites)) != len(derivative_sites) or any(i < 1 or i > len(s.ni) for i in derivative_sites):
         raise ValueError('Unique 1-based native Ni derivative sites required')
+    with np.load(structure, allow_pickle=False) as data:
+        if tangent:
+            if not all(key in data for key in CHART_KEYS):
+                raise ValueError('Tangent derivatives require the fixed background chart')
+            base, sites, basis, eta = (data[key].copy() for key in CHART_KEYS)
+            eta = np.asarray(eta, dtype=float)
+            if not np.array_equal(order, np.arange(len(order))) or sites.tolist() != derivative_sites:
+                raise ValueError('Chart and derivative sites must use the same native ordering')
+            if not np.allclose(chart_spins(base, sites, basis, eta), s.spins, rtol=0, atol=1e-12):
+                raise ValueError('Structure spins do not match the fixed chart')
+        elif any(key in data for key in CHART_KEYS):
+            raise ValueError('Chart structures require --tangent; legacy y derivatives are incompatible')
     output.mkdir(parents=True, exist_ok=False)
     def value(spins):
         pred = bundle.model.predict(replace(s, spins=spins))
@@ -310,26 +324,37 @@ def evaluate(directory: Path, structure: Path, output: Path,
     p, n = value(s.spins)
     write_coeff(output/'value.bin', meta, length, p, n, False)
     derivatives_p, derivatives_n = [], []
-    for site in derivative_sites:
+    modes = [(site, alpha) for site in derivative_sites for alpha in (1, 2)] if tangent else [(site, 0) for site in derivative_sites]
+    for (site, alpha), filename in zip(modes, derivative_files(derivative_sites, tangent)):
         samples = []
         for angle in (step, -step, 2*step, -2*step):
-            spins = s.spins.copy(); v = spins[site-1].copy()
-            spins[site-1] = [np.cos(angle)*v[0]+np.sin(angle)*v[2], v[1],
-                             -np.sin(angle)*v[0]+np.cos(angle)*v[2]]
+            if tangent:
+                displaced = eta.copy()
+                displaced[derivative_sites.index(site), alpha-1] += angle
+                spins = chart_spins(base, sites, basis, displaced)
+            else:
+                spins = s.spins.copy(); v = spins[site-1].copy()
+                spins[site-1] = [np.cos(angle)*v[0]+np.sin(angle)*v[2], v[1],
+                                 -np.sin(angle)*v[0]+np.cos(angle)*v[2]]
             samples.append(value(spins))
         dp, dn = ((8*(samples[0][i]-samples[1][i])-samples[2][i]+samples[3][i])/(12*step)
                   for i in (0, 1))
         if keep_intermediates:
             derivatives_p.append(dp); derivatives_n.append(dn)
-        write_coeff(output/f'dsite_{site:04}.bin', meta, length, dp, dn, True)
+        write_coeff(output/filename, meta, length, dp, dn, True)
     if keep_intermediates:
         np.savez(output/'prediction.npz', p=p, N=n, VU=meta['Ueff_eV']*(.5*np.eye(10)-n),
                  dP=np.array(derivatives_p), dN=np.array(derivatives_n),
                  derivative_sites=derivative_sites, native_from_input_order=order)
     report = dict(status='COMPLETE', model_id=meta['model_id'], L=length,
                   derivative_sites=derivative_sites, derivative_step_rad=step,
-                  derivative_axis=[0,1,0], prediction_rule=PREDICTION_RULE,
+                  prediction_rule=PREDICTION_RULE,
                   native_from_input_order=order.tolist(), scalar_offset_eV=meta['scalar_offset_eV'])
+    if tangent:
+        report.update(coordinates='fixed_exponential_chart', derivative_modes=modes,
+                      chart={key: value.tolist() for key, value in zip(CHART_KEYS, (base, sites, basis, eta))})
+    else:
+        report['derivative_axis'] = [0,1,0]
     save(output/'PREDICTION.json', report)
     return report
 
@@ -348,7 +373,7 @@ def hamiltonian(args) -> dict:
         raise ValueError('B_general model/basis/background binding mismatch')
     work = args.output.absolute()
     report = evaluate(args.model, args.structure, work, args.derivative_sites, args.step,
-                      keep_intermediates=args.keep_intermediates)
+                      keep_intermediates=args.keep_intermediates, tangent=getattr(args, 'tangent', False))
     indices = {}
     intermediates = [work/'PREDICTION.json']
     dimension = 60*report['L']**2
@@ -411,6 +436,7 @@ def main() -> None:
         for key in ('model','structure','output'):
             a.add_argument('--'+key, type=Path, required=True)
         a.add_argument('--derivative-sites', type=int, nargs='*', default=[])
+        a.add_argument('--tangent', action='store_true', help='differentiate the fixed chart stored in structure.npz')
         a.add_argument('--step', type=float, default=.001)
         a.add_argument('--keep-intermediates', action='store_true',
                        help='keep diagnostic prediction arrays and, for cal_Hsk, native inputs and indices')
@@ -429,7 +455,7 @@ def main() -> None:
         result = prepare_projection(args)
     elif args.command == 'evaluate':
         result = evaluate(args.model, args.structure, args.output, args.derivative_sites, args.step,
-                          keep_intermediates=args.keep_intermediates)
+                          keep_intermediates=args.keep_intermediates, tangent=args.tangent)
     else:
         result = hamiltonian(args)
     print(json.dumps(result, indent=2))

@@ -1,4 +1,4 @@
-"""Eight kz workers: frozen V1, Hamiltonian density, native functional, complete adjoint J12."""
+"""Eight kz workers: complete trial functional, adjoint J12 or two-site K4."""
 from pathlib import Path
 import os,sys,json,time,subprocess,struct
 from itertools import product
@@ -12,10 +12,34 @@ from common import atomic_npz, valid_npz, valid_json, bind_inputs, archive_incom
 from run_material import native_batch, binding, spin_structure, global_spin_rotation, coefficient_identity, valid_coefficients, prediction_identity
 from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
+from spin_coordinates import curvature_cases, derivative_files
 ENERGY=CONFIG['complete_energy']
 R=Path(ENERGY['work']);OLD=WORK;MIN=Path(ENERGY['reference_run'])
 SHARED=Path(ENERGY.get('shared_work', ENERGY['work']))
 SIZES=ENERGY['sizes']
+
+def case_definition(L):
+    if 'curvature' not in ENERGY:
+        return json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text())
+    spec = ENERGY['curvature']
+    if not isinstance(spec, dict) or set(spec)-{'sites', 'outer_steps_rad', 'inner_step_rad'}:
+        raise ValueError('Invalid curvature specification')
+    steps = spec.get('outer_steps_rad', np.deg2rad([.25, .5, 1.]).tolist())
+    cases = curvature_cases(spec['sites'], steps)
+    inner = spec.get('inner_step_rad', .001)
+    if not np.isfinite(inner) or inner <= 0 or max(steps)+2*inner >= np.pi:
+        raise ValueError('Invalid inner derivative step')
+    if max(spec['sites']) > L*L:
+        raise ValueError('Curvature sites exceed the supercell')
+    return dict(kind='K4', sites=spec['sites'], outer_steps_rad=steps,
+                inner_step_rad=inner, angle_configurations=cases)
+
+
+def readout_sites(definition, case):
+    if definition.get('kind') == 'K4':
+        return definition['sites']
+    targets = [p['site_native_1based'] for p in definition['selected_shells'][0]['pairs']]
+    return [1] if case == 0 or case >= 7 else [1, *targets]
 
 def frozen_metadata():
     sys.path.insert(0,str(SOURCE))
@@ -96,6 +120,8 @@ def cache_identity():
             if path.is_file(): files[label+'/'+path.name] = path
     for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py','native_input.py','kz_production.py'):
         files['code/'+name] = Path(__file__).with_name(name)
+    files['code/spin_coordinates.py'] = SOURCE/'spin_coordinates.py'
+    files['code/summarize_energy.py'] = Path(__file__).with_name('summarize_energy.py')
     files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
     return dict(version=1, files={name:input_digest(path) for name,path in files.items()},
                 model=CONFIG['model_id'],
@@ -231,7 +257,7 @@ def value_offset(path: Path, length: int, ueff: float) -> float:
 
 def spectrum(L,case,z,paths,ops,rvr,ueff):
     p=folder(L,case);p.mkdir(parents=True,exist_ok=True)
-    definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());sites=definition['angle_configurations'][case]['readout_sites_native_1based'];source=oldcase(L,case)
+    source=oldcase(L,case)
     batch=points(L,z)
     coeff=source/'coeff/value.bin';offset=value_offset(coeff,L,ueff)
     native_batch(coeff,np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin' for ki,_ in batch])
@@ -298,7 +324,7 @@ def assemble_density(L,case,dv):
     p=folder(L,case)
     if (valid_npz(p/'DENSITY.npz',{'N':(L*L,10,10)}) and valid_json(p/'ELECTRONIC.json',['F','band','bare','count'])
             and (p/'DENSITY.bin').is_file() and (p/'DENSITY.bin').stat().st_size==28+32*NG*L*L):return
-    case_input=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text())['angle_configurations'][case]
+    case_input=case_definition(L)['angle_configurations'][case]
     rows=[np.load(p/f'density_z{i}.npz') for i in range(8)]
     with np.load(SHARED/'reference/background.npz') as bg:
         reference_density=bg['density']
@@ -312,12 +338,12 @@ def assemble_density(L,case,dv):
     atomic_npz(p/'DENSITY.npz',N=N);write_density(p/'DENSITY.bin',cells_to_grid(rho,L),L)
     save(p/'ELECTRONIC.json',dict(charge=charge,charge_error=abs(charge-41*L*L),**{key:float(sum(r[key] for r in rows)) for key in ['bare','F','band','count']}))
 
-def native(L,ueff):
+def native(L,ueff,case_count=11):
     import tempfile
     out=R/f'L{L:02}/native';out.parent.mkdir(parents=True,exist_ok=True)
-    identity={str(folder(L,i)/'DENSITY.bin'):input_digest(folder(L,i)/'DENSITY.bin') for i in range(11)}
+    identity={str(folder(L,i)/'DENSITY.bin'):input_digest(folder(L,i)/'DENSITY.bin') for i in range(case_count)}
     identity['binary']=input_digest(Path(ENERGY['native_binary']))
-    names=[f'case_{i:02}_{suffix}' for i in range(11) for suffix in ('ENERGY.dat','TRUE.bin')]
+    names=[f'case_{i:02}_{suffix}' for i in range(case_count) for suffix in ('ENERGY.dat','TRUE.bin')]
     complete=False
     try:
         report=json.loads((out/'COMPLETE.json').read_text())
@@ -328,7 +354,7 @@ def native(L,ueff):
         archive_incomplete(out)
         with tempfile.TemporaryDirectory(prefix='.native_',dir=out.parent) as tmp:
             stage=Path(tmp)/'native';stage.mkdir()
-            input_file(stage,L);(stage/'input_list.txt').write_text('11\n'+''.join(f'case_{i:02} "{folder(L,i)}/DENSITY.bin" 0 0 1\n' for i in range(11)))
+            input_file(stage,L);(stage/'input_list.txt').write_text(f'{case_count}\n'+''.join(f'case_{i:02} "{folder(L,i)}/DENSITY.bin" 0 0 1\n' for i in range(case_count)))
             try:
                 with (stage/'native.out').open('w') as log:
                     subprocess.run([str(Path(ENERGY['native_binary'])),'grid.in'],cwd=stage,stdout=log,stderr=subprocess.STDOUT,check=True)
@@ -336,7 +362,7 @@ def native(L,ueff):
                 stage.rename(out)
                 raise
             if 'GGA_BRANCH_REEXPORT_COMPLETE' not in (stage/'native.out').read_text():raise RuntimeError('Incomplete native evaluation')
-            for i in range(11):
+            for i in range(case_count):
                 ee=np.loadtxt(stage/f'case_{i:02}_ENERGY.dat')
                 if ee.size<7 or not np.isfinite(ee).all():raise ValueError('Invalid native energy output')
                 field=read_density(stage/f'case_{i:02}_TRUE.bin',L)
@@ -344,7 +370,7 @@ def native(L,ueff):
             save(stage/'COMPLETE.json',dict(inputs=identity,files={name:input_digest(stage/name) for name in names}))
             stage.rename(out)
     # Recreate these cheap summaries even if interruption followed native publication.
-    for case in range(11):
+    for case in range(case_count):
         p=folder(L,case);ee=np.loadtxt(out/f'case_{case:02}_ENERGY.dat');n=np.load(p/'DENSITY.npz')['N'];eu,_=hubbard(n,ueff);b=json.loads((p/'ELECTRONIC.json').read_text());terms=dict(band_free=b['F'],minus_active_potential=-b['band']+b['bare'],EH=ee[0]*RY,Exc=ee[1]*RY,minus_core=-ee[2]*RY,ionic_density=ee[6]*RY,EU=eu)
         save(p/'ENERGY.json',dict(terms=terms,energy=sum(terms.values()),Ueff_eV=ueff,constant_reference_excluded=True))
 
@@ -362,20 +388,23 @@ def potential_stage(L,case,z,paths,ops,ueff):
     save(p/f'alpha_z{z}.json',dict(numerator=numerator,denominator=denominator))
 
 def torque_stage(L,z,rvr,ops,ueff):
-    definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());targets=[v['site_native_1based'] for v in definition['selected_shells'][0]['pairs']]
-    for chunk in [list(range(0,4)),list(range(4,8)),list(range(8,11))]:
+    definition=case_definition(L); tangent=definition.get('kind')=='K4'
+    count=len(definition['angle_configurations'])
+    for start in range(0,count,4):
+        chunk=list(range(start,min(start+4,count)))
         entries=[];densities=[];ds=[]
         for case in chunk:
             p=folder(L,case);mu=json.loads((p/'MU.json').read_text())['mu'];al=[json.loads((p/f'alpha_z{i}.json').read_text()) for i in range(8)];alpha=sum(a['numerator'] for a in al)/sum(a['denominator'] for a in al)
-            sites=[1] if case==0 or case>=7 else [1,*targets]
-            derivs=[derivative(oldcase(L,case)/f'coeff/dsite_{s:04}.bin') for s in sites]
+            sites=readout_sites(definition,case)
+            derivs=[derivative(oldcase(L,case)/'coeff'/name) for name in derivative_files(sites,tangent)]
+            labels=[(s,a) for s in sites for a in (1,2)] if tangent else sites
             if any(d['Ueff'] != ueff for d in derivs):
                 raise ValueError(f'Derivative coefficient Ueff differs from model Ueff {ueff}: {oldcase(L,case)}')
             for ki,k in points(L,z):
                 dest=p/f'torque_k{ki:04}.npz'
-                if valid_npz(dest,{'Ae':(60*L*L,60*L*L),'numerator':(),'denominator':()}):continue
+                if valid_npz(dest,{'torque':(len(labels),),'sites':np.shape(labels),'imaginary':()}):continue
                 b=np.load(p/f'k_{ki:04}.npz');e,Q=b['e'],b['Q'];ae=np.load(p/f'adjoint_{ki:04}.npz')['Ae'];ae.flat[::len(e)+1]-=alpha;f,fp,_=fermi(e,mu);Z=Q@(loewner(e,f,fp)*ae)@Q.conj().T;G=fold_unitary(L,k)
-                densities.append(-G.conj().T@Z@G);entries.append((case,ki,k,dest,sites));ds.append(derivs)
+                densities.append(-G.conj().T@Z@G);entries.append((case,ki,k,dest,labels));ds.append(derivs)
         if entries:
             vals,im,stats=contract_batch(rvr,OLD/'basis/pure_H0.au',np.array([a[2] for a in entries]),np.array(densities),ds[0],workers=1,derivatives_by_point=ds,projectors_by_point=[np.load(ops[a[1]]/'native_projectors.npy',mmap_mode='r') for a in entries])
             for row,v,imag in zip(entries,vals,im):atomic_npz(row[3],torque=v,sites=row[4],imaginary=imag)
@@ -383,9 +412,32 @@ def torque_stage(L,z,rvr,ops,ueff):
 
 def collect(L):
     import csv
-    d=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text());shell=d['selected_shells'][0];rec=[]
-    for case in range(11):
-        rows=[np.load(folder(L,case)/f'torque_k{i:04}.npz') for i in range(32)];rec.append(dict(sites=rows[0]['sites'].tolist(),torque=np.mean([r['torque'] for r in rows],axis=0).tolist()))
+    d=case_definition(L);rec=[]
+    for case in range(len(d['angle_configurations'])):
+        rows=[]
+        for i in range(32):
+            with np.load(folder(L,case)/f'torque_k{i:04}.npz') as data:
+                rows.append(dict(data))
+        expected=[(s,a) for s in d['sites'] for a in (1,2)] if d.get('kind')=='K4' else readout_sites(d,case)
+        if any(not np.array_equal(r['sites'],expected) or r['torque'].shape!=(len(expected),)
+               or not np.isfinite(r['torque']).all() for r in rows):
+            raise ValueError('Torque modes or values do not match the requested case')
+        rec.append(dict(sites=rows[0]['sites'].tolist(),torque=np.mean([r['torque'] for r in rows],axis=0).tolist()))
+    if d.get('kind')=='K4':
+        from summarize_energy import curvature_result
+        energies=[json.loads((folder(L,i)/'ENERGY.json').read_text())['energy'] for i in range(len(rec))]
+        result=curvature_result(d,energies,[r['torque'] for r in rec])
+        base=spin_structure(L,d['angle_configurations'][0])
+        result.update(L=L,base_spins=base['chart_base_spins'].tolist(),tangent_basis=base['chart_basis'].tolist(),
+                      mesh=[2,2,8],sigma_eV=SIGMA,active_electrons=21*L*L,total_electrons=41*L*L,
+                      functional='complete trial-density Gaussian free energy',
+                      complement='fixed reference density and occupation in the input frame',
+                      other_spins='fixed',physical_validation=False,
+                      interpretation='periodic supercell Hessian; no image-multiplicity division',
+                      provenance=str(R/'INPUTS.json'))
+        save(R/f'L{L:02}/RESULT.json',result)
+        return
+    shell=d['selected_shells'][0]
     def t(case,site):return rec[case]['torque'][rec[case]['sites'].index(site)]
     rows=[]
     for p in shell['pairs']:
@@ -397,24 +449,25 @@ def collect(L):
 
 def prepare_coefficients(L,z):
     from run_material import coefficients
-    definition=json.loads((ROOT/f'inputs/L{L:02}/CASE.json').read_text())
-    targets=[p['site_native_1based'] for p in definition['selected_shells'][0]['pairs']]
-    assert sorted(targets)==sorted([2,L,L+1,L*(L-1)+1])
-    expected=[(None,0),(1,.25),(1,-.25),(1,.5),(1,-.5),(1,1),(1,-1),(2,.25),(2,-.25),(2,.5),(2,-.5)]
-    for i,(site,angle) in enumerate(expected):
-        case=definition['angle_configurations'][i]
-        assert (case['perturb_site_native_1based'],case['angle_deg'])==(site,angle)
+    definition=case_definition(L);tangent=definition.get('kind')=='K4'
+    step=definition['inner_step_rad'] if tangent else .001
+    if not tangent:
+        targets=[p['site_native_1based'] for p in definition['selected_shells'][0]['pairs']]
+        assert sorted(targets)==sorted([2,L,L+1,L*(L-1)+1])
+        expected=[(None,0),(1,.25),(1,-.25),(1,.5),(1,-.5),(1,1),(1,-1),(2,.25),(2,-.25),(2,.5),(2,-.5)]
+        assert [(c['perturb_site_native_1based'],c['angle_deg']) for c in definition['angle_configurations']]==expected
+    for i,case in enumerate(definition['angle_configurations']):
         if i%8!=z:continue
         out=oldcase(L,i)
         base=spin_structure(L,case)
-        sites=[1] if i==0 or i>=7 else [1,*targets]
+        sites=readout_sites(definition,i)
         if str(L) in ENERGY.get('reuse_cases',{}):
-            if not valid_coefficients(out/'coeff',coefficient_identity(base,sites,.001)):
+            if not valid_coefficients(out/'coeff',coefficient_identity(base,sites,step,tangent=tangent)):
                 raise ValueError(f'External coefficients incomplete or unbound: {out}')
         else:
             out.mkdir(parents=True,exist_ok=True)
             atomic_npz(out/'structure.npz',**base)
-            coefficients(out/'structure.npz',out/'coeff',sites,.001)
+            coefficients(out/'structure.npz',out/'coeff',sites,step,tangent=tangent)
     barrier(f'coefficients_L{L}',z)
 
 def main(z):
@@ -424,6 +477,7 @@ def main(z):
     if not (R/'INPUTS.json').is_file() and any(
             path.is_file() for L in SIZES for path in (R/f'L{L:02}').glob('case_*/*')):
         raise ValueError(f'Unbound complete-energy checkpoints have unknown energy gauge: {R}; use a new work directory')
+    definitions={L:case_definition(L) for L in SIZES}
     R.mkdir(parents=True,exist_ok=True)
     SHARED.mkdir(parents=True,exist_ok=True)
     start_attempt(z)
@@ -434,7 +488,8 @@ def main(z):
     if not np.isfinite(ueff) or ueff < 0:
         raise ValueError(f'Invalid model Ueff: {ueff}')
     identity=cache_identity();identity['Ueff_eV']=ueff;bind_cache(identity)
-    spin_files={str(ROOT/f'inputs/L{L:02}'/name):input_digest(ROOT/f'inputs/L{L:02}'/name) for L in SIZES for name in ('structure.npz','CASE.json')}
+    input_names=('structure.npz',) if 'curvature' in ENERGY else ('structure.npz','CASE.json')
+    spin_files={str(ROOT/f'inputs/L{L:02}'/name):input_digest(ROOT/f'inputs/L{L:02}'/name) for L in SIZES for name in input_names}
     spin_files['native_binary']=input_digest(Path(ENERGY['native_binary']))
     spin_files['prediction_runtime']=prediction_identity()
     for root in ENERGY.get('reuse_cases',{}).values():
@@ -462,16 +517,18 @@ def main(z):
     save(SHARED/f'reused_RVR_z{z}.json',dict(path=str(rvr),bytes=size))
     for L in SIZES:
         paths,ops=wave_cache(L,z,identity,st,slab)
-        for case in range(11):
+        count=len(definitions[L]['angle_configurations'])
+        for case in range(count):
             spectrum(L,case,z,paths,ops,rvr,ueff);density_stage(L,case,z,paths,dv,ops);barrier(f'density_L{L}_c{case}',z)
             if z==0:assemble_density(L,case,dv)
         barrier(f'all_density_L{L}',z)
-        if z==0:native(L,ueff)
+        if z==0:native(L,ueff,count)
         barrier(f'native_L{L}',z)
-        for case in range(11):potential_stage(L,case,z,paths,ops,ueff)
+        for case in range(count):potential_stage(L,case,z,paths,ops,ueff)
         barrier(f'potentials_L{L}',z);torque_stage(L,z,rvr,ops,ueff);barrier(f'torques_L{L}',z)
         if z==0:collect(L)
-    if z==0:save(R/'COMPLETE.json',dict(V1_files_verified=len(frozen_metadata()['files'])+1,sizes=SIZES,J='J12 only'))
+    if z==0:save(R/'COMPLETE.json',dict(V1_files_verified=len(frozen_metadata()['files'])+1,sizes=SIZES,
+                                     **({'observable':'K4'} if 'curvature' in ENERGY else {'J':'J12 only'})))
 
 if __name__=='__main__':
     try:main(int(sys.argv[1]))

@@ -16,6 +16,8 @@ from common import CONFIG, INTERFACE, BUILD, REF, ROOT, WORK, SPINS, PYTHON, SIG
 from common import compute_node, run, save, load_h, chemical_potential, check_regression, quality_check
 from common import atomic_npz, valid_npz, valid_json, archive_incomplete, bind_inputs, input_digest, arrays_digest
 from torque_contract import derivative,contract_batch
+sys.path.insert(0, str(SOURCE))
+from spin_coordinates import chart_spins, tangent_basis, derivative_files
 
 
 def binding() -> None:
@@ -140,23 +142,26 @@ def prediction_identity():
     return {f:input_digest(code/f) for f in RUNTIME}
 
 
-def coefficient_identity(structure, sites, step):
-    return dict(structure=arrays_digest(structure),sites=list(sites),step=step,
+def coefficient_identity(structure, sites, step, *, tangent=False):
+    identity = dict(structure=arrays_digest(structure),sites=list(sites),step=step,
                 model=input_digest(INTERFACE/'V_func_tmp/V_FUNC.json'),
                 evaluator=input_digest(SOURCE/'local_vfunc.py'), runtime=prediction_identity())
+    if tangent:
+        identity.update(tangent=True, coordinates=input_digest(SOURCE/'spin_coordinates.py'))
+    return identity
 
 
 def valid_coefficients(directory, identity):
     try:
         record=json.loads((directory/'CHECKPOINT.json').read_text())
         if record['inputs']!=identity:raise ValueError(f'Coefficient inputs changed: {directory}')
-        expected=['PREDICTION.json','value.bin',*[f'dsite_{i:04}.bin' for i in identity['sites']]]
+        expected=['PREDICTION.json','value.bin',*derivative_files(identity['sites'], identity.get('tangent', False))]
         return set(record['files'])==set(expected) and all(input_digest(directory/name)==record['files'][name] for name in expected)
     except (OSError,KeyError,json.JSONDecodeError):return False
 
 
-def coefficients(structure: Path, directory: Path, sites: list[int], step: float) -> None:
-    with np.load(structure) as data:identity=coefficient_identity(dict(data),sites,step)
+def coefficients(structure: Path, directory: Path, sites: list[int], step: float, *, tangent=False) -> None:
+    with np.load(structure) as data:identity=coefficient_identity(dict(data),sites,step,tangent=tangent)
     import fcntl
     directory.parent.mkdir(parents=True,exist_ok=True)
     with (directory.parent/(directory.name+'.lock')).open('a') as lock:
@@ -166,8 +171,9 @@ def coefficients(structure: Path, directory: Path, sites: list[int], step: float
         with tempfile.TemporaryDirectory(prefix='.coeff_',dir=directory.parent) as tmp:
             staged=Path(tmp)/'coeff'
             run(PYTHON,SOURCE/'local_vfunc.py','evaluate','--model',INTERFACE/'V_func_tmp',
-                '--structure',structure,'--output',staged,'--derivative-sites',*sites,'--step',step)
-            names=['PREDICTION.json','value.bin',*[f'dsite_{i:04}.bin' for i in sites]]
+                '--structure',structure,'--output',staged,'--derivative-sites',*sites,'--step',step,
+                *(['--tangent'] if tangent else []))
+            names=['PREDICTION.json','value.bin',*derivative_files(sites, tangent)]
             save(staged/'CHECKPOINT.json',dict(inputs=identity,files={name:input_digest(staged/name) for name in names}))
             staged.rename(directory)
 
@@ -182,6 +188,22 @@ def global_spin_rotation(case: dict) -> Rotation:
 
 def spin_structure(length, case):
     with np.load(ROOT/f'inputs/L{length:02}/structure.npz') as data:s=dict(data)
+    if 'tangent_sites' in case:
+        if 'global_spin_rotation_deg' in case:
+            raise ValueError('K4 uses a fixed complement frame; rotate the entire input/reference package separately')
+        from local_vfunc import metadata, read_structure, runtime
+        model = INTERFACE/'V_func_tmp'; meta = metadata(model)
+        _, features = runtime(model, meta)
+        base, cell, _ = read_structure(ROOT/f'inputs/L{length:02}/structure.npz', meta, features)
+        if cell != length:
+            raise ValueError('Input structure and requested cell size differ')
+        sites = np.asarray(case['tangent_sites'])
+        if sites.shape != (2,) or sites.dtype.kind not in 'iu' or np.any(sites < 1) or np.any(sites > len(base.spins)):
+            raise ValueError('Invalid native tangent sites')
+        basis = tangent_basis(base.spins[sites-1]); eta = np.asarray(case['eta'], dtype=float)
+        s.update(ni=base.ni, spins=chart_spins(base.spins, sites, basis, eta),
+                 chart_base_spins=base.spins, chart_sites=sites, chart_basis=basis, chart_eta=eta)
+        return s
     site=case['perturb_site_native_1based']
     if site is not None:
         angle=np.deg2rad(case['angle_deg']);v=s['spins'][site-1].copy()

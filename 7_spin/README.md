@@ -70,6 +70,70 @@ Complete energy uses the Wannier overlap metric. The band-free-energy entry diag
 
 Native assembly represents the fixed scalar zero as `cI`. The complete-energy entry replaces it with `cS` in the folded basis, solves using `S^(-1/2)`, and saves the corrected H for torque evaluation. To recompute old results with this version, configure new `complete_energy.work` and `complete_energy.shared_work` directories. Original model coefficients may still be supplied through `reuse_cases`.
 
+## Two-Site Transverse Curvature (K4)
+
+To select K4 instead of J12, add this object inside the external configuration's
+`complete_energy` section (site numbers are 1-based **native Ni** indices):
+
+```json
+"curvature": {
+  "sites": [1, 2],
+  "inner_step_rad": 0.001,
+  "outer_steps_rad": [0.004363323129985824, 0.008726646259971648, 0.017453292519943295]
+}
+```
+
+Use fresh spin and shared complete-energy work directories. Supply the existing
+`inputs/Lxx/structure.npz` geometry and background spins; K4 generates its own
+25 cases and does not read `CASE.json`. The existing supported sizes remain
+4, 6 and 8; `sites` must fit every configured size. Exactly two distinct sites
+and three positive outer steps `h, 2h, 4h` are supported. Omitted steps use the
+values above. The worker and summarizer entry points are unchanged. The band/J
+drivers do not implement K4; their legacy interface remains unchanged.
+
+For each selected spin `e0`, the code fixes orthonormal tangent columns `T` at
+the background and uses the sphere exponential chart
+`e(eta) = cos(|eta|) e0 + sinc(|eta|/pi) T eta`.
+Both outer probes and inner four-point derivatives use this **same** chart,
+including at displaced points. The native derivative filenames are
+`dsite_XXXX_a1.bin` and `dsite_XXXX_a2.bin`. For standalone evaluation, a chart
+structure contains `chart_base_spins`, `chart_sites`, `chart_basis`, `chart_eta`
+and the matching displaced `spins`; use `local_vfunc.py evaluate --tangent`
+with `--derivative-sites` in the same order as `chart_sites`. Chart structures
+are rejected by the legacy y-axis derivative mode. Coefficient checkpoints
+bind the chart arrays, derivative mode, step and coordinate source.
+
+The convention is `tau = -dF/deta`, `K = d²F/deta² = -d(tau)/deta`, with no
+Néel-sign conversion or shell averaging. `F` is the same complete trial-density
+Gaussian free energy as above, at fixed electron number. Every probe updates
+the model fields, model occupations, eigenstates and active density. Other
+spin directions and the reference complement density/occupation stay fixed.
+This is not a constrained self-consistent DFT Hessian or a spin-relaxed Hessian.
+
+`Lxx/RESULT.json` contains the raw, unsymmetrized 4x4 matrix
+`K_eV_per_rad2`, with row/column order
+`[(site1,1),(site1,2),(site2,1),(site2,2)]`, including both on-site blocks.
+It also records `F0_eV`, `tau0_eV_per_rad`, the background and tangent bases,
+all 25 energies/torques, per-step matrices, Richardson step indicators,
+reciprocity residuals, and energy-versus-torque **diagonal** curvature errors.
+The summarizer writes `K4_eV_per_rad2.csv` with the same order.
+Coverage refers only to these four coordinates; no uncomputed sites are zeros.
+Results are periodic-supercell derivatives, without image-multiplicity division.
+Nonzero background torque must be retained when interpreting local curvature;
+positive curvature alone does not establish a stationary stable state.
+
+The analytic checks need no model payload, native binary or production job:
+
+```sh
+/absolute/existing/python -B tests/test_spin_curvature.py
+```
+
+They compare all four blocks with an independent Heisenberg Hessian on collinear
+and nonstationary noncollinear backgrounds, including energy mixed differences,
+step dependence, basis covariance, native ordering, and synthetic driver I/O.
+These checks do not validate actual-material accuracy, k/size convergence, or
+the QE/native production path. Those require separate data and benchmarks.
+
 ## Inputs and Build
 
 Use an existing Python 3.11+ environment with NumPy and SciPy. Native local programs require Fortran and BLAS/LAPACK.
