@@ -25,6 +25,9 @@ templates and `parameter`, then generate the inputs:
 "$ANSATZ_PYTHON" tools/configure.py --output-dir /absolute/external/case
 ```
 
+For preparation executables, build with `tools/build.py SOURCE` and run with
+`tools/build.py run [--mpi N] SOURCE [arguments]`, using the same Python interpreter.
+
 ## 3. Run the workflow
 
 | Step | Commands and required inputs |

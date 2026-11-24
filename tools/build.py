@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile selected Fortran programs, or verify their saved build fingerprints."""
+"""Compile, verify, or run Fortran programs with saved build fingerprints."""
 from pathlib import Path
 import argparse
 import json
@@ -104,17 +104,45 @@ def build(sources: list[Path], fc: str, flags: list[str], libs: list[str], check
             (work / "build.json").write_text(json.dumps(saved, indent=2) + "\n")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+def run(arguments: list[str]) -> None:
+    parser = argparse.ArgumentParser(prog=f"{sys.argv[0]} run",
+        description="Run a verified Fortran build from the current calculation directory.")
+    parser.add_argument("--mpi", type=int, help="number of MPI ranks")
+    parser.add_argument("source", type=Path)
+    parser.add_argument("arguments", nargs=argparse.REMAINDER)
+    args = parser.parse_args(arguments)
+    source = args.source if args.source.is_absolute() else ROOT / args.source
+    binary = verify(source)
+    command = [str(binary)] + args.arguments
+    if args.mpi is not None:
+        if args.mpi < 1:
+            parser.error("--mpi must be positive")
+        if source.stem in ("make_wan_fun_mpi", "make_dis_mpi") and args.mpi < 2:
+            parser.error("this master/worker program needs at least two MPI ranks")
+        command = ["mpirun", "-np", str(args.mpi)] + command
+    os.execvp(command[0], command)
+
+
+def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "run":
+        run(argv[1:])
+        return
+    parser = argparse.ArgumentParser(description=__doc__,
+        epilog="Run a verified executable: %(prog)s run [--mpi N] source [arguments ...]")
     parser.add_argument("sources", nargs="+", type=Path)
     parser.add_argument("--fc", default=os.environ.get("FC", "gfortran"))
     parser.add_argument("--flags", default=os.environ.get("FFLAGS", "-O2 -fopenmp -ffree-line-length-none -fallow-argument-mismatch"))
     parser.add_argument("--libs", default=os.environ.get("LIBS", DEFAULT_LIBS))
     parser.add_argument("--check", action="store_true", help="GNU syntax check only")
     parser.add_argument("--verify", action="store_true", help="reject stale or missing builds without compiling")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.verify:
         for source in args.sources:
             print(f"Verified: {verify(source)}")
     else:
         build(args.sources, args.fc, shlex.split(args.flags), shlex.split(args.libs), args.check)
+
+
+if __name__ == "__main__":
+    main()

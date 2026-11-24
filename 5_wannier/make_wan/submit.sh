@@ -13,5 +13,5 @@ if ((MPI_RANKS < 2)); then
     exit 1
 fi
 for ((band=WAN_MIN; band<=WAN_MAX; band++)); do
-    "$PYTHON" "$ROOT/tools/run.py" --mpi "$MPI_RANKS" 5_wannier/make_wan/make_wan_fun_mpi.f90 "$band"
+    "$PYTHON" "$ROOT/tools/build.py" run --mpi "$MPI_RANKS" 5_wannier/make_wan/make_wan_fun_mpi.f90 "$band"
 done

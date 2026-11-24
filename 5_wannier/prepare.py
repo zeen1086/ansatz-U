@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert standard Wannier90 U/disentanglement and HR files to the HYC records."""
+"""Convert Wannier90 U/disentanglement matrices to HYC records and k points."""
 from pathlib import Path
 import argparse
 import sys
@@ -33,44 +33,6 @@ def read_u(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return result, kpoints
 
 
-def read_hr(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    with path.open() as stream:
-        next(stream)
-        nw, nr = int(next(stream)), int(next(stream))
-        if nw < 1 or nr < 1:
-            raise ValueError("invalid HR dimensions")
-        degeneracy = []
-        while len(degeneracy) < nr:
-            degeneracy += [int(x) for x in next(stream).split()]
-        if len(degeneracy) != nr or min(degeneracy) < 1:
-            raise ValueError("invalid HR degeneracy")
-        vectors, matrices = [], []
-        for _ in range(nr):
-            matrix = np.zeros((nw,nw), dtype="<c16", order="F")
-            seen, vector = set(), None
-            for _ in range(nw*nw):
-                row = next(stream).split()
-                if len(row) != 7:
-                    raise ValueError("invalid HR row")
-                v = tuple(map(int,row[:3]))
-                i,j = int(row[3])-1, int(row[4])-1
-                if not 0 <= i < nw or not 0 <= j < nw or (i,j) in seen:
-                    raise ValueError("invalid or duplicate HR matrix index")
-                if vector is not None and vector != v:
-                    raise ValueError("mixed translations in HR block")
-                vector = v
-                seen.add((i,j))
-                matrix[i,j] = complex(float(row[5]),float(row[6]))
-            vectors.append(vector)
-            matrices.append(matrix)
-        if len(set(vectors)) != nr or any(line.strip() for line in stream):
-            raise ValueError("duplicate translations or trailing HR data")
-    matrices = np.stack(matrices, axis=2)
-    if not np.isfinite(matrices).all():
-        raise ValueError("non-finite HR elements")
-    return np.array(vectors), np.array(degeneracy), matrices
-
-
 def prepare(source: Path, output: Path, p: dict) -> None:
     seed = source / p["prefix"]
     u, kpoints = read_u(seed.with_name(seed.name+"_u.mat"))
@@ -84,12 +46,7 @@ def prepare(source: Path, output: Path, p: dict) -> None:
     active = "\n".join(line.split("!")[0].split("#")[0] for line in win.splitlines())
     if not re.search(r"use_ws_distance\s*=\s*(?:\.false\.|false|f)(?:\s|$)",active) or re.search(r"\bdis_win_(min|max)\s*=",active) or re.search(r"use_ws_distance\s*=\s*(?:\.true\.|true|t)\b",active):
         raise ValueError("require no outer dis_win bounds and use_ws_distance=false")
-    vectors, deg, hr = read_hr(seed.with_name(seed.name+"_hr.dat"))
-    if hr.shape[:2] != (nw,nw):
-        raise ValueError("HR nwan disagrees with parameter")
-    names = ["u_mat_HYC", "u_dis_mat_HYC", "window_TF_HYC", "k_list", "ir_vec_HYC", "H_deg_HYC"]
-    names += [f"hr_HYC_{n+1}" for n in range(len(deg))]
-    new_outputs(output,names)
+    new_outputs(output,["u_mat_HYC", "u_dis_mat_HYC", "window_TF_HYC", "k_list"])
     for name, matrix in (("u_mat_HYC",u),("u_dis_mat_HYC",dis)):
         with (output/name).open("wb") as stream:
             write_record(stream,np.array(matrix.shape,dtype="<i4"))
@@ -97,15 +54,11 @@ def prepare(source: Path, output: Path, p: dict) -> None:
     with (output/"window_TF_HYC").open("wb") as stream:
         write_record(stream,np.ones((nb,nk),dtype="<i4",order="F"))
     np.savetxt(output/"k_list",kpoints,fmt="%12.8f%12.8f%12.8f")
-    np.savetxt(output/"ir_vec_HYC",vectors,fmt="%8d%8d%8d")
-    np.savetxt(output/"H_deg_HYC",np.column_stack((np.arange(1,len(deg)+1),deg)),fmt="%8d%8d")
-    for n in range(len(deg)):
-        with (output/f"hr_HYC_{n+1}").open("wb") as stream:
-            write_record(stream,hr[:,:,n])
 
 
 if __name__ == "__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output",type=Path,help="directory for new converted records; existing outputs are rejected")
     args=parser.parse_args()
-    prepare(Path(load()["nscf_dir"]),args.output,load())
+    parameters=load()
+    prepare(Path(parameters["nscf_dir"]),args.output,parameters)

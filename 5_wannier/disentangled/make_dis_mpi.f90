@@ -132,7 +132,7 @@ if (.not. my_rank.eq.0)  then
                 ipool=imuti_pool*(size-1)+my_rank
                 if (ipool .gt. npool) cycle
                 ik=pool(ipool,1)
-                call int2char(ik,k_char)
+                k_char=row_text(ik)
                 dis_fun(:,:,:)=dcmplx(0.0d0,0.0d0)
 
                 do ibnd=1,nbnd
@@ -144,7 +144,7 @@ if (.not. my_rank.eq.0)  then
 
                 do ibnd=win_min(ik),win_max(ik)
                         print*,ik,ibnd
-                        call int2char(ibnd+bnd_cut,bnd_char)
+                        bnd_char=row_text(ibnd+bnd_cut)
 
                         file_name=p_nscf_dir//'WFN/wfn_k'//trim(k_char)//'_b'//trim(bnd_char)//'_vec_dp'
                         open(unit=101,file=trim(file_name)&
@@ -160,7 +160,7 @@ if (.not. my_rank.eq.0)  then
                 enddo
 
                 do i=1,nwan
-                        call int2char(i,bnd_char)
+                        bnd_char=row_text(i)
                         file_name='./WFN/wfn_k'//trim(k_char)//'_w'//trim(bnd_char)//'_vec_dp'
                         open(unit=101,file=trim(file_name)&
                                 &,action='write',access='sequential',form='unformatted',status='replace')
@@ -177,19 +177,5 @@ if (my_rank.eq.0)  then
 endif
 
 call mpi_finalize(ierr)
-
-contains
-
-subroutine int2char(in_int,out_char)
-        integer,intent(in)              :: in_int
-        character(len=20),intent(out)    :: out_char
-
-IF (in_int .LT. 10 )   WRITE(out_char,'(I1)')in_int
-IF ((in_int .LT. 100)  .and. (in_int .GE. 10)   )    WRITE(out_char,'(I2)')in_int
-IF ((in_int .LT. 1000) .and. (in_int .GE. 100)  )    WRITE(out_char,'(I3)')in_int
-IF ((in_int .LT. 10000) .and. (in_int .GE. 1000) )   WRITE(out_char,'(I4)')in_int
-IF ((in_int .LT. 100000) .and. (in_int .GE. 10000) ) WRITE(out_char,'(I5)')in_int
-
-end subroutine int2char
 
 end program

@@ -4,7 +4,7 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 
 | Check | Result |
 |---|---|
-| Repository offline suite | 102 passed; 1 MPI check skipped because the compiler and mpirun are unavailable |
+| Repository offline suite | 103 passed; 1 MPI check skipped because the compiler and mpirun are unavailable |
 | DFT input preparation | 26-state coverage, original sampling ranges, integer upper-hemisphere angles, seed repeatability, subset consistency, external pseudopotential paths, primitive-to-supercell generation, preserved parameters, isolated scratch, and invalid-input rejection passed |
 | SCF-to-V1 label package | Nine offline tests passed for complex N/order, source consistency, PBE, GGA branch, grid/cell, scalar gauge and atomic publication; real saved-state N/XML parsing passed. Native exporter syntax/interface and build dry-run checks passed; linking and running against actual QE libraries was not performed |
 | Single-response fit and spatial kernels | Twelve checks passed: label datasets/reference, complete joint-loss gradients, short synthetic fit, checkpoint/history recovery, direct bundle export, D4h fields and actual compiled native interpolation/window parity |
@@ -19,6 +19,7 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 | Model format, packaged runtime, explicit output paths, cache identity, and restart checks | Passed |
 | Merged bundle loader and existing exported packages | Four-module exports and existing five-module layouts give identical synthetic p/N; missing loaders and mixed runtime modules are rejected; both layouts retain runtime identity checks |
 | Consolidated spin commands and shared band calculations | Import/help without calculation, selfcheck dispatch, K4 summary, eigensystem cache reuse/recovery, Gaussian density/free-energy parity, and changed source-identity rejection passed |
+| Wannier preparation cleanup and shared density records | Four retained conversion outputs are byte-identical without an HR input; build/run argument and MPI guards, stale-build rejection, density byte compatibility and invalid-record rejection passed. Compiled integer-name conversion agrees for 1..99999; the MPI Wannier calculation was not run |
 
 The shared NPY parsing and byte-count checks, current numerical kernels, and compiled V1 weight values are preserved. Tests cover implementation consistency and reject unsupported model packages. They do not establish independent DFT accuracy, material-grid projection accuracy, or size/k-grid convergence. No new DFT or production calculation was run.
 

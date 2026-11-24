@@ -121,6 +121,7 @@ def cache_identity():
     for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py','native_input.py','kz_production.py'):
         files['code/'+name] = Path(__file__).with_name(name)
     files['code/spin_coordinates.py'] = SOURCE/'tools/spin_coordinates.py'
+    files['code/fortran_io.py'] = SOURCE/'tools/fortran_io.py'
     files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
     return dict(version=1, files={name:input_digest(path) for name,path in files.items()},
                 model=CONFIG['model_id'],

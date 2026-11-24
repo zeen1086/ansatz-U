@@ -7,7 +7,7 @@ program make_wan_func
         integer         :: wan_bnd,read_int3(3),nwan
         complex(kind(0d0)),allocatable :: ini_wfn(:,:),fin_wfn(:,:,:),read_wfn(:,:)
         complex(kind(0d0)),allocatable :: unmk(:,:,:)
-        complex(kind(0d0)),allocatable :: unmk_dis(:,:,:),U(:,:,:)
+        complex(kind(0d0)),allocatable :: unmk_dis(:,:,:)
         complex(kind(0d0)),allocatable :: wan_fun(:,:,:)!,to_write_wan(:,:,:)
         complex(kind(0d0)),allocatable :: wan_full_grid(:,:)
         complex(kind(0d0)),allocatable :: w_dx(:,:,:),w_dz(:,:,:),w_dy(:,:,:)
@@ -115,7 +115,6 @@ if (.not. nk .eq. read_int3(3)) then
         stop
 endif
 allocate(unmk_dis(read_int3(1),read_int3(2),read_int3(3)))
-allocate(U(read_int3(1),read_int3(2),read_int3(3)))
 read(101) unmk_dis  !  nbnd, nwan, nk
 close(101)
 
@@ -150,16 +149,6 @@ enddo
                 print*, 'win max not found for k=',ik
                 stop
         endif
-enddo
-
-U(:,:,:)=dcmplx(0.0d0,0.0d0)
-do ik=1,nk
-do ibnd=1,nbnd
-        if (include_TF(ibnd,ik) .eq. 0 ) cycle
-do i=1,nwan
-        U(ibnd,i,ik)=sum(unmk(:,i,ik)*unmk_dis(ibnd-win_min(ik)+1,:,ik))
-enddo
-enddo
 enddo
 
 file_name=p_nscf_dir//'V_HYC_dp'
@@ -249,8 +238,8 @@ if (.not. my_rank.eq.0)  then
                 close(103)
                 endif
 
-                call int2char(ik,k_char)
-                call int2char(iwan,bnd_char)
+                k_char=row_text(ik)
+                bnd_char=row_text(iwan)
                 file_name=p_nscf_dir//'disentangled/WFN/wfn_k'//trim(k_char)//'_w'//trim(bnd_char)//'_vec_dp'
                 open(unit=101,file=trim(file_name)&
                     &,action='read',access='sequential',form='unformatted',status='old')
@@ -283,7 +272,7 @@ if (my_rank.eq.0)  then
 
         wan_fun(:,:,:)=wan_fun(:,:,:)/sqrt(dble(nx)*dble(ny)*dble(nz))/dble(nk)
 
-        call int2char(iwan,wan_char)
+        wan_char=row_text(iwan)
         open(unit=101,file='./wan_'//trim(wan_char),&
                         &action='write',access='append',status='replace',form='unformatted')
                 write(101) wan_fun
@@ -293,19 +282,5 @@ if (my_rank.eq.0)  then
 endif
 
 call mpi_finalize(ierr)
-
-contains
-
-subroutine int2char(in_int,out_char)
-        integer,intent(in)              :: in_int
-        character(len=20),intent(out)    :: out_char
-
-IF (in_int .LT. 10 )   WRITE(out_char,'(I1)')in_int
-IF ((in_int .LT. 100)  .and. (in_int .GE. 10)   )    WRITE(out_char,'(I2)')in_int
-IF ((in_int .LT. 1000) .and. (in_int .GE. 100)  )    WRITE(out_char,'(I3)')in_int
-IF ((in_int .LT. 10000) .and. (in_int .GE. 1000) )   WRITE(out_char,'(I4)')in_int
-IF ((in_int .LT. 100000) .and. (in_int .GE. 10000) ) WRITE(out_char,'(I5)')in_int
-
-end subroutine int2char
 
 end program

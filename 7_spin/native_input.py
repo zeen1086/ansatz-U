@@ -1,21 +1,24 @@
 """Initialize a QE grid/core/pseudopotential evaluator without SCF or diagonalization."""
 from pathlib import Path
-import json,struct
+import json,sys
 import numpy as np
-from common import CONFIG, INTERFACE
+from common import CONFIG, INTERFACE, SOURCE
+sys.path.insert(0, str(SOURCE))
+from tools.fortran_io import read_array, write_record
 
 def write_density(path,values,L):
     temp=path.with_name(path.name+'.partial')
     with temp.open('wb') as f:
-        for raw in [np.array([40*L,40*L,36],dtype='<i4').tobytes(),np.asarray(values,dtype='<f8').tobytes(order='F')]:
-            f.write(struct.pack('<i',len(raw)));f.write(raw);f.write(struct.pack('<i',len(raw)))
+        write_record(f,np.array([40*L,40*L,36],dtype='<i4'))
+        write_record(f,np.asarray(values,dtype='<f8'))
     temp.replace(path)
 
 def read_density(path,L):
     with path.open('rb') as f:
-        def rec():
-            n=f.read(4);size=struct.unpack('<i',n)[0];b=f.read(size);assert len(b)==size and f.read(4)==n;return b
-        assert np.array_equal(np.frombuffer(rec(),'<i4'),[40*L,40*L,36]);a=np.frombuffer(rec(),'<f8').reshape(-1,4,order='F').copy();assert not f.read(1)
+        if not np.array_equal(read_array(f,'<i4',(3,)),[40*L,40*L,36]):
+            raise ValueError('Density grid differs from the requested supercell')
+        a=read_array(f,'<f8',(40*L*40*L*36,4)).copy()
+        if f.read(1):raise ValueError('Unexpected trailing density records')
     return a
 
 def input_file(folder,L):

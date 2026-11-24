@@ -29,6 +29,28 @@ prepare = module("prepare_wannier", "5_wannier/prepare.py")
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_build_run_dispatch_preserves_arguments_and_mpi_guards(self):
+        import tools.build as build_tool
+        source='5_wannier/make_wan/make_wan_fun_mpi.f90'
+        binary=Path('/synthetic/verified-wannier')
+        with patch.object(build_tool,'verify',return_value=binary) as verify_build, \
+                patch.object(build_tool.os,'execvp') as execute:
+            build_tool.main(['run','--mpi','2',source,'argument with spaces','--native-flag'])
+            verify_build.assert_called_once_with(ROOT/source)
+            execute.assert_called_once_with('mpirun',
+                ['mpirun','-np','2',str(binary),'argument with spaces','--native-flag'])
+            for ranks in ('0','1'):
+                execute.reset_mock()
+                with self.subTest(ranks=ranks),contextlib.redirect_stderr(io.StringIO()), \
+                        self.assertRaises(SystemExit) as error:
+                    build_tool.main(['run','--mpi',ranks,source])
+                self.assertEqual(error.exception.code,2)
+                execute.assert_not_called()
+            verify_build.side_effect=RuntimeError('Rebuild stale source')
+            with self.assertRaisesRegex(RuntimeError,'Rebuild'):
+                build_tool.main(['run',source])
+            execute.assert_not_called()
+
     def test_qe_installer_rejects_wrong_file_size(self):
         installer=module("qe_install", "0_QE/install.py")
         with tempfile.TemporaryDirectory() as directory:
@@ -72,14 +94,19 @@ class WorkflowTests(unittest.TestCase):
             dis=np.arange(12).reshape((3,2,2),order="F")+0.1j
             write_u("toy_u.mat",u); write_u("toy_u_dis.mat",dis)
             (base/"toy.win").write_text("use_ws_distance = false\n# dis_win_min = -10\n")
-            (base/"toy_hr.dat").write_text("fixture\n2\n1\n2\n0 0 0 1 1 1 0\n0 0 0 2 1 2 -1\n0 0 0 1 2 2 1\n0 0 0 2 2 3 0\n")
             output=base/"converted"
             prepare.prepare(base,output,p)
+            self.assertEqual({path.name for path in output.iterdir()},
+                             {'u_mat_HYC','u_dis_mat_HYC','window_TF_HYC','k_list'})
             with (output/"u_dis_mat_HYC").open("rb") as stream:
                 np.testing.assert_array_equal(read_array(stream,"<i4",(3,)),[3,2,2])
                 np.testing.assert_array_equal(read_array(stream,"<c16",(3,2,2)),dis)
-            with (output/"hr_HYC_1").open("rb") as stream:
-                np.testing.assert_array_equal(read_array(stream,"<c16",(2,2)),[[1,2+1j],[2-1j,3]])
+            with (output/"u_mat_HYC").open("rb") as stream:
+                np.testing.assert_array_equal(read_array(stream,"<i4",(3,)),[2,2,2])
+                np.testing.assert_array_equal(read_array(stream,"<c16",(2,2,2)),u)
+            with (output/"window_TF_HYC").open("rb") as stream:
+                np.testing.assert_array_equal(read_array(stream,"<i4",(3,2)),np.ones((3,2)))
+            np.testing.assert_allclose(np.loadtxt(output/'k_list'),[[0,0,0],[.5,0,0]])
             with self.assertRaises(FileExistsError): prepare.prepare(base,output,p)
             (base/"toy.win").write_text("dis_win_max=4\n")
             with self.assertRaises(ValueError): prepare.prepare(base,base/"invalid",p)
@@ -114,7 +141,7 @@ class WorkflowTests(unittest.TestCase):
                     subprocess.run([sys.executable,str(ROOT/'tools/build.py'),str(source),
                                     '--fc','gfortran','--flags=-O0','--libs='],
                                    cwd=run_directory,check=True,capture_output=True)
-                    command=[sys.executable,str(ROOT/'tools/run.py'),str(source.relative_to(ROOT)),
+                    command=[sys.executable,str(ROOT/'tools/build.py'),'run',str(source.relative_to(ROOT)),
                              'argument with spaces']
                     self.assertEqual(subprocess.check_output(command,cwd=run_directory,text=True).strip(),"30")
                     self.assertEqual((Path(run_directory)/'run-output.txt').read_text(),'argument with spaces\n')

@@ -11,7 +11,6 @@ from tools.parameters import ROOT, fortran_module, load
 
 def render(values: dict) -> dict[Path, str]:
     p = dict(values)
-    p["band_path_points"] = f"{values['band_segments']:3d}"
     p["spinors"] = "true" if values["nspin"] == 2 else "false"
     p["noncolin"] = ".true." if values["nspin"] == 2 else ".false."
     p["write_v_qe"] = ".true." if values["write_v_qe"] else ".false."

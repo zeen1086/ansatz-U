@@ -61,13 +61,14 @@ with patch.object(Path, 'mkdir', side_effect=AssertionError('created a directory
                 identity = driver.cache_identity()
                 self.assertIn('code/complete_readout.py', identity['files'])
                 self.assertIn('code/native_input.py', identity['files'])
+                self.assertIn('code/fortran_io.py', identity['files'])
                 source_names = {name[5:] for name in identity['files'] if name.startswith('code/')}
                 spin_sources = {path.name for path in (Path(driver.__file__).parent).glob('*.py')}
-                self.assertTrue(source_names-{'spin_coordinates.py', 'frozen_io.f90', 'cal_Hsk.f90'} <= spin_sources)
+                self.assertTrue(source_names-{'spin_coordinates.py', 'fortran_io.py', 'frozen_io.f90', 'cal_Hsk.f90'} <= spin_sources)
                 driver.bind_cache(identity)
                 driver.bind_cache(identity)
                 changed = json.loads(json.dumps(identity))
-                changed['files']['code/complete_readout.py'] = 'changed source identity'
+                changed['files']['code/fortran_io.py'] = 'changed source identity'
                 with self.assertRaisesRegex(ValueError, 'Shared inputs changed'):
                     driver.bind_cache(changed)
 
@@ -291,7 +292,8 @@ with patch.object(Path, 'mkdir', side_effect=AssertionError('created a directory
             density = np.column_stack((np.full(4,41.),moments))[:,None,:]
             np.savez(ref/'background.npz', density=density, N=shells(moments))
             with patch.object(run_material,'ROOT',root), patch.multiple(
-                    driver, ROOT=root, R=root, SHARED=root, NG=1, cells_to_grid=lambda a,L:a[:,0]):
+                    driver, ROOT=root, R=root, SHARED=root, NG=1, cells_to_grid=lambda a,L:a[:,0]), \
+                    patch.object(driver,'write_density') as write_density:
                 original_spins=run_material.spin_structure(2,local)['spins']
                 self.assertGreater(original_spins[0,0], 0.)
                 np.testing.assert_allclose(run_material.spin_structure(2,rotated)['spins'],
@@ -306,7 +308,8 @@ with patch.object(Path, 'mkdir', side_effect=AssertionError('created a directory
                     driver.assemble_density(2,i,1.)
                     with np.load(case/'DENSITY.npz') as output:
                         np.testing.assert_allclose(output['N'], active+shells(expected), atol=1e-15)
-                    field=native_input.read_density(case/'DENSITY.bin',2)
+                    path,field,length=write_density.call_args.args
+                    self.assertEqual((path,length),(case/'DENSITY.bin',2))
                     np.testing.assert_allclose(field[:,1:], expected, atol=1e-15)
                     np.testing.assert_array_equal(field[:,0], density[:,0,0])
                 for invalid in ([0,180], [0,float('nan'),0]):
@@ -335,12 +338,28 @@ with patch.object(Path, 'mkdir', side_effect=AssertionError('created a directory
     def test_density_record_roundtrip_and_truncation(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'density.bin'
-            values = np.arange(density_map.NG*4, dtype=float).reshape(-1, 4)
+            values = np.arange(density_map.NG*4, dtype='>f8').reshape(-1, 4)
             native_input.write_density(path, values, 1)
             np.testing.assert_array_equal(native_input.read_density(path, 1), values)
-            path.write_bytes(path.read_bytes()[:-1])
-            with self.assertRaises(AssertionError):
-                native_input.read_density(path, 1)
+            def record(raw):
+                marker=struct.pack('<i',len(raw))
+                return marker+raw+marker
+            grid=record(np.array([40,40,36],dtype='<i4').tobytes())
+            payload=np.asarray(values,dtype='<f8').tobytes(order='F')
+            expected=grid+record(payload)
+            self.assertEqual(path.read_bytes(),expected)
+            self.assertFalse(path.with_name('density.bin.partial').exists())
+            invalid=[expected[:-1],expected+b'extra',grid+record(payload[:-8]),
+                     record(np.array([40,40,35],dtype='<i4').tobytes())+record(payload),
+                     grid+record(struct.pack('<d',float('nan'))+payload[8:])]
+            for content in invalid:
+                path.write_bytes(content)
+                with self.assertRaises(ValueError):native_input.read_density(path,1)
+            path.write_bytes(expected)
+            with patch.object(native_input,'write_record',side_effect=[None,RuntimeError('interrupted')]):
+                with self.assertRaisesRegex(RuntimeError,'interrupted'):
+                    native_input.write_density(path,values,1)
+            self.assertEqual(path.read_bytes(),expected)
 
     def test_lossless_kz_slice_and_rejection(self):
         with tempfile.TemporaryDirectory() as tmp:
