@@ -4,8 +4,9 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 
 | Check | Result |
 |---|---|
-| Repository offline suite | 77 passed; 1 MPI check skipped because the compiler and mpirun are unavailable |
+| Repository offline suite | 86 passed; 1 MPI check skipped because the compiler and mpirun are unavailable |
 | DFT input preparation | 26-state coverage, original sampling ranges, integer upper-hemisphere angles, seed repeatability, subset consistency, external pseudopotential paths, primitive-to-supercell generation, preserved parameters, isolated scratch, and invalid-input rejection passed |
+| SCF-to-V1 label package | Nine offline tests passed for complex N/order, source consistency, PBE, GGA branch, grid/cell, scalar gauge and atomic publication; real saved-state N/XML parsing passed. Native exporter syntax/interface and build dry-run checks passed; linking and running against actual QE libraries was not performed |
 | Root layout and moved preparation commands | Offline suite passed after relocation; external-directory configure/build/run, argument forwarding, working-directory preservation, and stale-build rejection passed |
 | Clean external builds through default `make` and `tools/build.py` | Passed; Python build fingerprints verified |
 | Single-response algebra, full complex N, symmetry, occupation bounds, and parameter derivatives | Passed |
@@ -19,5 +20,7 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 The shared NPY parsing and byte-count checks, current numerical kernels, and compiled V1 weight values are preserved. Tests cover implementation consistency and reject unsupported model packages. They do not establish independent DFT accuracy, material-grid projection accuracy, or size/k-grid convergence. No new DFT or production calculation was run.
 
 The magnetic SCF generator produces 26 configurations using the original sampling rules and a selected seed. Generated inputs use atomic initialization and inherited base numerical settings; these checks do not establish SCF convergence or material accuracy.
+
+The label extractor reads complete complex N from native `occup.txt` and checks its magnitudes against the saved XML. It rebuilds dense-grid local fields with the original SCF magnetic GGA branch and no explicit constraint field. The offline adapter test uses synthetic output and does not establish a material-level extraction regression; that requires the matching QE 7.6 build. No fitting code or training run is included in this step.
 
 See [7_spin](../7_spin/README.md#small-checks-and-native-regression) for test commands and [6_RVR](../6_RVR/README.md) for the required model export format. Model, basis, runtime, or input changes require matching data and fresh work directories.

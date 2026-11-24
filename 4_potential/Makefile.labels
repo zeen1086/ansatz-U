@@ -1,0 +1,15 @@
+# Run from the configured QE 7.6 PP/src directory with BUILD=/absolute/output.
+SOURCE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+ifeq ($(strip $(BUILD)),)
+$(error Set BUILD to an external output directory)
+endif
+LABEL_BUILD := $(abspath $(BUILD))
+include ../../make.inc
+MODFLAGS = $(BASEMOD_FLAGS) $(MOD_FLAG)../../PW/src $(MOD_FLAG)../../Modules $(MOD_FLAG)../../dft-d3
+LABEL_LIBS = libpp.a ../../PW/src/libpw.a ../../KS_Solvers/libks_solvers.a ../../dft-d3/libdftd3qe.a $(BASEMODS)
+.DEFAULT_GOAL := labels
+.PHONY: labels
+labels:
+	mkdir -p "$(LABEL_BUILD)"
+	$(MPIF90) $(F90FLAGS) -c "$(SOURCE_DIR)export_labels.f90" -o "$(LABEL_BUILD)/export_labels.o"
+	$(LD) $(LDFLAGS) -o "$(LABEL_BUILD)/export_labels.x" "$(LABEL_BUILD)/export_labels.o" $(LABEL_LIBS) $(QELIBS)

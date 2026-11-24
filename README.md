@@ -6,7 +6,7 @@ One supported workflow for the frozen LaNiO₂ V1 model: export existing weights
 |---|---|
 | `0_QE` | QE 7.6 source modifications, installation, and build scripts |
 | `1_scf`–`3_band_no_mag` | Structure, SCF, and band input templates |
-| `4_potential` | Magnetic-configuration generation and potential extraction; `local/` contains the frozen V1 inference sources |
+| `4_potential` | Magnetic-configuration generation, SCF-to-v/B/N label extraction, and frozen V1 inference sources |
 | `5_wannier` | NSCF/Wannier templates and wavefunction/projector format conversion |
 | `6_RVR` | Current V1 local spatial-kernel projection, merging, and background/projector readers |
 | `7_spin` | V1 Hamiltonians, batch calculations, and complete-energy readout |
@@ -91,6 +91,8 @@ The default set contains 26 configurations. `--seed` makes the random samples re
 Cutoffs, smearing, convergence and mixing settings come from the supplied SCF input. Primitive-cell expansion halves the in-plane k mesh and scales explicit FFT dimensions and band counts. The archived four-Ni setup used a 7.9184×7.9184×3.3745 Å cell, 70/280 Ry cutoffs, 480 bands, Gaussian 0.01 Ry smearing, a 4×4×8 k mesh, no SOC, and a 0.1 direction-constraint strength. The generic preparation defaults are not a replacement for these archived numerical settings.
 
 Generated cases start from atomic density and `atomic+random` wavefunctions. Historical calculations often reused converged saves; matching target directions alone does not reproduce that initialization or establish the same converged electronic state. Inspect SCF convergence and achieved magnetic directions after running QE.
+
+After each SCF converges, use [`4_potential/extract_labels.py`](4_potential/README.md) to rebuild its constraint-free scalar/B fields and read complete complex Hubbard N from the save. The exporter is built separately against the matching existing QE 7.6 libraries. Label packages remain external; this step does not train the model.
 
 `V_split` reads `polar2` and an explicit mapping file. Its first line is `n_spins n_channels n_cells`, followed by one line of 1-based spin indices per split cell. Cells follow x/y/z order, with z varying fastest; see `examples/4_potential/channel_map.dat`. Output retains the original `V1...` files and adds extracted `spinN/V_HYC_dp` and `spin_info`.
 
