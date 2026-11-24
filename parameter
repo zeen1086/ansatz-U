@@ -1,16 +1,11 @@
 # LaNiO2 input template. Review numerical grids and pseudopotentials before any DFT run.
-# Frozen ansatz+U calculations use run.nml and do not read this file.
+# QE/Wannier preparation only; frozen V1 uses explicit model inputs and an external production JSON.
 
 [paths]
-scf_dir = "/explicit/external/case/1_scf"
-func_dir = "/explicit/external/case/4_potential/fit"
 nscf_dir = "/explicit/external/case/5_wannier"
-rvr_dir = "/explicit/external/case/6_RVR"
-super_h_dir = "/explicit/external/case/6_RVR/super_H"
 pseudo_dir = "/explicit/external/pseudopotentials"
 
 [model]
-n_func = 3
 nwan = 30
 nspin = 1
 wan_min = 1
@@ -18,20 +13,8 @@ wan_max = 30
 convert_size_x = 1
 convert_size_y = 1
 convert_size_z = 1
-period_x = 2
-period_y = 2
-period_z = 1
-nx = 2
-ny = 2
-nz = 1
-axial = 1.0
-fac = 1.0
 a0 = 7.48180367
 celldm3 = 0.85231865
-ef = 14.4304
-eta = 0.05
-broadening = [0.05]
-selected_eta = 1
 
 [potential]
 split_nspinor = 1
@@ -41,7 +24,6 @@ split_super_z = 1
 atom_super_x = 2
 atom_super_y = 2
 atom_super_z = 1
-weight_floor = 0.1
 
 [qe]
 prefix = "LaNiO2"
@@ -74,14 +56,3 @@ dis_froz_max = 25.0
 dis_num_iter = 200
 dis_conv_tol = 1e-08
 num_iter = 0
-
-[spin]
-band_energy_min = 0.0
-band_energy_max = 3.0
-band_energy_points = 300
-dos_min = -20.0
-dos_max = 20.0
-dos_points = 4000
-threads = 4
-rvr_chunk = 8192
-rvr_channel_block = 6

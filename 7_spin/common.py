@@ -15,7 +15,7 @@ INTERFACE = Path(CONFIG['interface'])
 BUILD = Path(CONFIG['native_build'])
 REF = Path(CONFIG['references'])
 WORK = Path(CONFIG['work'])  # Shared RVR and basis inputs.
-SPINS = Path(CONFIG.get('spin_work', CONFIG['work']))
+SPINS = Path(CONFIG['spin_work'])
 PYTHON = CONFIG['python']
 RY = 13.605693122994
 SIGMA = .01*RY
@@ -180,13 +180,13 @@ def bind_inputs(path: Path, identity: dict, *, ignored=()) -> None:
 
 
 def input_digest(path: Path) -> str:
-    """Compatibility name: metadata signature, without reading file contents."""
+    """Metadata signature, without reading file contents."""
     stat=path.stat()
     return f'stat:{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}'
 
 
 def arrays_digest(arrays: dict) -> str:
-    """Compatibility name: exact small spin input description, without hashing."""
+    """Exact small spin input description, without hashing."""
     rows=[]
     for key,value in sorted(arrays.items()):
         a=np.asarray(value)

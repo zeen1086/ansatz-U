@@ -1,8 +1,0 @@
-! eval_joint joint_eval.nml V_func_tmp joint_texture.dat [output_prefix]
-! Default outputs: V_fit (Ry), dV_fit (Ry/rad), N_VU_fit, dN_dVU_fit (N dimensionless, VU eV).
-&joint_eval_control
- ueff=1d0,
- derivative_site=1,
- occupation_tolerance=1d-8,
- enforce_occupation_bounds=.true.
-/

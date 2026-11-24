@@ -89,7 +89,7 @@ class BackgroundExportTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):export_background(source,r/'pure.au')
 
 
-def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_binary: Path | None=None, shared_cache_checks: bool=False):
+def run(binary: Path, destination: Path, *, batch_checks: bool=False, shared_cache_checks: bool=False):
     rng = np.random.default_rng(141126)
     with tempfile.TemporaryDirectory(prefix='V1_native_', dir=destination) as tmp:
         r = Path(tmp); model=r/'V_func_tmp';wan=r/'wan';project=r/'rvr'
@@ -156,13 +156,6 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
         assert not (project/'B_general.partial').exists()
         reference=(project/'B_general').read_bytes()
         assert cache.is_file() and all(p.is_file() for p in rows)
-        if reference_binary is not None:
-            baseline=r/'baseline';baseline.mkdir();old_control=r/'baseline.nml'
-            old_control.write_text(control.read_text().replace(str(project),str(baseline)))
-            call(reference_binary/'cal_RVR_split',old_control,0)
-            for i in range(1,31):call(reference_binary/'cal_RVR_split',old_control,i)
-            call(reference_binary/'combine',old_control)
-            assert (baseline/'B_general').read_bytes()==reference
         # Resume after publication and an interrupted cleanup, with the cache already gone.
         cache.unlink();rows[0].unlink();(project/'unrelated.txt').write_text('preserve this file')
         stamp=(project/'B_general').stat().st_mtime_ns
@@ -209,7 +202,7 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
                     from torque_contract import contract_batch,derivative as read_derivative
                     old=r/'shared_inputs';(old/'RVR').mkdir(parents=True,exist_ok=True)
                     put(old/'RVR/PROJECTION.json',dict(basis_id=basis_id))
-                    with patch.object(ce,'OLD',old),patch.object(ce,'SHARED',r/'shared'),patch.dict(ce.CONFIG,model_id=model_id):
+                    with patch.object(ce,'WORK',old),patch.object(ce,'SHARED',r/'shared'),patch.dict(ce.CONFIG,model_id=model_id):
                         op=[ce.cached_operators(length,k[:3],{'fixture':model_id},ce.static(r/'pure.au')) for k in q]
                     listing=r/f'cache_L{length}.txt';listing.write_text(''.join(str(d/'native.bin')+'\n' for d in op))
                     cached=r/f'cached_{length}_{int(derivative)}';cached_ctl=cached.with_suffix('.nml')
@@ -299,7 +292,6 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
             full_complex_N=True,scalar_mean_same_basis=True,periodic_z_phases=True,
             wrong_model_rejected=True,compact_rvr_matches_debug=True,failed_combine_retains_intermediates=True,
             interrupted_stages_resumed=True,completed_outputs_not_rewritten=True,merge_skips_grid_payload=True,
-            pre_change_rvr_byte_identical=reference_binary is not None,
             scope='synthetic full native chain versus direct periodic real-grid integration',
             actual_material_Hamiltonian_validation=False)
         if shared_cache_checks:
@@ -313,7 +305,6 @@ def run(binary: Path, destination: Path, *, batch_checks: bool=False, reference_
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--binary',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
-    p.add_argument('--reference-binary',type=Path)
     p.add_argument('--shared-cache-checks',action='store_true')
     args=p.parse_args();args.output.mkdir(parents=True,exist_ok=True)
-    print(json.dumps(run(args.binary,args.output,batch_checks=True,reference_binary=args.reference_binary,shared_cache_checks=args.shared_cache_checks),indent=2))
+    print(json.dumps(run(args.binary,args.output,batch_checks=True,shared_cache_checks=args.shared_cache_checks),indent=2))

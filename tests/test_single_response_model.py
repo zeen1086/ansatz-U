@@ -1,4 +1,4 @@
-"""One effective occupation response, its gradients and legacy weight import."""
+"""One effective occupation response, its gradients and source weight import."""
 import json
 from pathlib import Path
 import sys
@@ -50,14 +50,12 @@ class SingleResponseModelTests(unittest.TestCase):
         delta1 = to_channels(n1 - nref)
         correction = np.concatenate((.7*delta1['se'][:, :1], -.4*delta1['vo'][:, :1]), axis=-1)
         with patch('model.matrix_sigmoid', wraps=matrix_sigmoid) as sigmoid:
-            pred = m.predict(s, max_iterations=0)
+            pred = m.predict(s)
         self.assertEqual(sigmoid.call_count, 2)
         np.testing.assert_allclose(pred.N, n1, atol=2e-15)
         np.testing.assert_allclose(pred.p, p0 + correction, atol=2e-15)
         np.testing.assert_allclose(pred.VU, m.ueff*(.5*np.eye(10)-n1))
         self.assertGreater(np.max(abs(n1-n0)), 1e-3)
-        self.assertEqual(pred.iterations, 0)
-        self.assertTrue(pred.converged)
         m.params['b_p_se'] += 3.
         m.params['K_se'] *= 2.
         changed = m.predict(s)
@@ -112,10 +110,11 @@ class SingleResponseModelTests(unittest.TestCase):
                 self.assertGreater(abs(analytical), 1e-9)
                 np.testing.assert_allclose(analytical, (plus-minus)/(2*h), rtol=2e-5, atol=2e-9)
 
-    def legacy_archive(self, directory, schema):
+    def coupled_archive(self, directory):
         save_model(self.m, directory)
         meta = json.loads((directory/'model.json').read_text())
-        meta.update(schema=schema, rho=.25, feedback_coordinates={'se': [[2.]], 'vo': [[.5]]})
+        meta.update(schema='LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2', rho=.25,
+                    feedback_coordinates={'se': [[2.]], 'vo': [[.5]]})
         (directory/'model.json').write_text(json.dumps(meta))
         weights = {k: v.copy() for k, v in self.m.params.items() if not k.startswith('A_')}
         for sector, kvalue, lvalue in (('se', 8., 5.), ('vo', 3., -2.)):
@@ -133,8 +132,8 @@ class SingleResponseModelTests(unittest.TestCase):
 
     def test_coupled_import_retains_scaled_LK_and_roundtrips(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp)/'old'
-            weights, scale = self.legacy_archive(source, 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2')
+            source = Path(tmp)/'source'
+            weights, scale = self.coupled_archive(source)
             imported = load_model(source)
             self.assertFalse(any(k.startswith('L_') for k in imported.params))
             for sector in ('se', 'vo'):
@@ -153,44 +152,26 @@ class SingleResponseModelTests(unittest.TestCase):
             np.testing.assert_array_equal(after.N, before.N)
             np.testing.assert_array_equal(after.p, before.p)
 
-    def test_warm_import_preserves_compensated_head(self):
-        for schema in ('LANIO2_GEOMETRIC_FEEDBACK_V1', 'LANIO2_SEPARATE_LOCAL_GRID_FEEDBACK_V1'):
-            with self.subTest(schema=schema), tempfile.TemporaryDirectory() as tmp:
-                source = Path(tmp)/'warm'
-                weights, scale = self.legacy_archive(source, schema)
-                with self.assertRaises(ValueError):
-                    load_model(source)
-                imported = load_model(source, warm=True)
-                for sector, column, reference in (('se', 0, self.ref.p_scalar), ('vo', 1, self.ref.p_spin)):
-                    lmap = np.zeros_like(weights['L_' + sector])
-                    lmap[0, 0] = scale*weights['L_' + sector][0, 0]
-                    np.testing.assert_allclose(imported.params['Q_' + sector],
-                                               weights['Q_' + sector] + lmap @ weights['p_' + sector])
-                    np.testing.assert_allclose(imported.params['b_Q_' + sector],
-                                               weights['b_Q_' + sector] + lmap @ (
-                                                   weights['b_p_' + sector] - reference/self.m.scale[:, column]))
-                    expected_a = np.zeros((15, 15))
-                    expected_a[0, 0] = scale**2*weights['L_' + sector][0, 0]*weights['K_' + sector][0, 0]
-                    np.testing.assert_allclose(imported.params['A_' + sector], expected_a, atol=1e-15)
-                meta = json.loads((source/'model.json').read_text())
-                meta['p_feature_maps'] = {}
-                for sector in ('se', 'vo'):
-                    size = weights['p_' + sector].shape[1]
-                    meta['p_feature_maps'][sector] = {
-                        'plus': np.eye(size).tolist(), 'minus': np.zeros((size, 0)).tolist()}
-                (source/'model.json').write_text(json.dumps(meta))
-                with self.assertRaisesRegex(ValueError, 'p_feature_maps cannot be compensated exactly'):
-                    load_model(source, warm=True)
-
-    def test_saved_one_way_requires_original_coupled_archive(self):
+    def test_coupled_import_rejects_invalid_normalization(self):
         with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp)/'one_way'
+            source = Path(tmp)/'source'
+            self.coupled_archive(source)
+            meta = json.loads((source/'model.json').read_text())
+            for rho in (0., 1., float('nan')):
+                with self.subTest(rho=rho):
+                    meta['rho'] = rho
+                    (source/'model.json').write_text(json.dumps(meta))
+                    with self.assertRaisesRegex(ValueError, 'invalid source contraction threshold'):
+                        load_model(source)
+
+    def test_unsupported_source_schema_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)/'unsupported'
             save_model(self.m, source)
             meta = json.loads((source/'model.json').read_text())
-            meta['schema'] = 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'
+            meta['schema'] = 'unsupported'
             (source/'model.json').write_text(json.dumps(meta))
-            np.savez(source/'parameters.npz', **{k: v for k, v in self.m.params.items() if not k.startswith('A_')})
-            with self.assertRaisesRegex(ValueError, '(?i)(coupled|feedback)'):
+            with self.assertRaisesRegex(ValueError, 'unsupported model schema'):
                 load_model(source)
 
 

@@ -50,27 +50,15 @@ class Prediction:
     p: np.ndarray                   # normalized; use physical_p() at kernel boundary
     N: np.ndarray
     VU: np.ndarray                   # eV
-    auxiliary: np.ndarray | None
-    converged: bool
-    iterations: int
-    residual_p: float
-    residual_N: float
-    contraction_bound: float
     cache: dict
-
-    def assert_converged(self) -> None:
-        if not self.converged:
-            raise RuntimeError(f"fixed point not converged: iterations={self.iterations}, "
-                               f"r_p={self.residual_p:.3e}, r_N={self.residual_N:.3e}")
 
 
 class LocalModel:
     def __init__(self, spec: FeatureSpec, p_scales: np.ndarray,
-                 reference: Reference, rho: float | None = None, *, p_representation: np.ndarray,
+                 reference: Reference, *, p_representation: np.ndarray,
                  ueff: float = 1., seed: int = 0):
         self.spec, self.reference = spec, reference
         self.ueff = float(ueff)
-        require(rho is None or 0 < rho < 1, "invalid legacy contraction threshold")
         require(np.isfinite(ueff) and ueff >= 0, "invalid Ueff")
         p_scales = np.array(p_scales, dtype=float, copy=True)
         require(p_scales.ndim == 2 and p_scales.shape[1] == 2 and len(p_scales) > 0,
@@ -198,13 +186,9 @@ class LocalModel:
             response[k] = np.einsum("ab,nbc->nac", maps[f"A_{k}"], nc[k])
         return to_matrix(response)
 
-    def predict(self, structure: Structure, *, auxiliary: bool = False,
-                tolerance: float = 1e-10, max_iterations: int = 100,
+    def predict(self, structure: Structure, *,
                 prepared_features: dict[str, np.ndarray] | None = None,
                 normalized: bool = False) -> Prediction:
-        require(np.isfinite(tolerance) and tolerance > 0 and
-                isinstance(max_iterations, int) and max_iterations >= 0, "invalid solver limits")
-        require(not auxiliary, "direct model has no auxiliary density head")
         raw = features(structure, self.spec) if prepared_features is None else prepared_features
         phi = {}
         for k, (_, c) in SECTORS.items():
@@ -227,15 +211,14 @@ class LocalModel:
         cache = dict(phi=phi, spins=structure.spins.copy(), maps=maps,
                      initial_sigmoid=initial_cache, initial_delta=initial_delta,
                      sigmoid=sigmoid_cache, delta=delta)
-        return Prediction(p, n, self.ueff*(np.eye(10)/2 - n), None, True, 0, 0., 0., 0., cache)
+        return Prediction(p, n, self.ueff*(np.eye(10)/2 - n), cache)
 
     def physical_p(self, prediction: Prediction) -> np.ndarray:
         return prediction.p * self.scale
 
     def backward(self, pred: Prediction, gp: np.ndarray, gn: np.ndarray,
-                 gaux: np.ndarray | None = None, *, active=None) -> dict[str, np.ndarray]:
+                 *, active=None) -> dict[str, np.ndarray]:
         """Differentiate both sigmoid evaluations and the explicit A response."""
-        require(gaux is None, "direct model has no auxiliary density loss")
         cache, out = pred.cache, self.zero_grads(active)
         field_grad = self.split_p(gp)
         occupation_grad = to_channels(gn)

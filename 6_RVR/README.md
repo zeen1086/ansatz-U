@@ -28,9 +28,9 @@ Skip the following two steps if a compatible exported model and pure H0 backgrou
 
 The scalar constant above applies to the current frozen V1. Export with the original four-Ni geometry. The structure NPZ contains `cell, positions, species, ni, spins`: geometry in Å, atomic numbers, zero-based Ni indices, and unit spin directions. The background must be a compatible DFT-only `primitive.bin` in the same basis as the projected Wannier functions.
 
-The prediction rule is `N_single_response_to_v_B`: `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 + A(N0-N_ref))`, then `p = p0 + K(N1-N_ref)`, with `A = L K` compiled from the normalized coupled maps. Export accepts the original coupled weights or a saved single-response model, without refitting. Saved one-way weights discarded L and cannot recover A; use the original coupled source.
+The prediction rule is `N_single_response_to_v_B`: `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 + A(N0-N_ref))`, then `p = p0 + K(N1-N_ref)`, with `A = L K` compiled from the normalized coupled maps. Export accepts the original coupled V1 weights or a saved single-response model, without refitting.
 
-Legacy coupled exports without a `prediction_rule` use the current repository runtime and retain their model/RVR binding. Exports marked `N_dir_to_v_B` are rejected: re-export from the coupled source into a new directory and prepare its model-bound RVR again. New exports include their own runtime. Use fresh spin and complete-energy work paths after changing the prediction rule; checkpoint identities include the selected runtime.
+Exported packages must declare this `prediction_rule` and contain all six runtime files. Unsupported or incomplete packages are rejected. Generate a current package from the original V1 weights with `export`; use its matching model-bound RVR and fresh work directories. Checkpoint identities include the packaged runtime.
 
 ## 2. Prepare Projection Inputs
 

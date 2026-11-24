@@ -1,6 +1,6 @@
 module local_vfunc
  use numerics
- use joint_npy, only: npy_header,exact_bytes
+ use npy_io, only: npy_header,exact_bytes
  implicit none
  type::local_potential
   integer::np,nn,grid(3),half(3)

@@ -66,7 +66,7 @@ def native(coeff: Path, k: np.ndarray, out: Path, components: bool=False) -> Pat
 
 def native_batch(coeff: Path, k: np.ndarray, directories: list[Path], base: Path,
                  dimension: int, components: bool=False, *, rvr: Path | None=None, background_files: list[Path] | None=None) -> None:
-    """Assemble one kz group and publish legacy per-point checkpoints atomically."""
+    """Assemble one kz group and publish per-point checkpoints atomically."""
     if len(k)!=len(directories) or not 1<=len(k)<=16 or np.ptp(k[:,2])>1e-10:
         raise ValueError('Expected one kz group of up to 16 points and matching output paths')
     if background_files is not None and len(background_files)!=len(k):
@@ -374,17 +374,10 @@ def collect(length: int,mesh: int,step: float) -> None:
     for name,data in [('J_pairs.csv',rows),('J_shells.csv',shells)]:
         with (out/name).open('w',newline='') as f:
             writer=csv.DictWriter(f,fieldnames=list(data[0]));writer.writeheader();writer.writerows(data)
-    prior=None
-    if length==2 and Path(CONFIG['old_J']).exists():
-        old=np.loadtxt(CONFIG['old_J'],delimiter=',',skiprows=1)[:,1:]
-        order=[0,2,1,3]
-        prior=max(abs(row['J_meV']-old[order[row['target']-1],0]) for row in rows)
     save(out/'RESULT.json',dict(status='COMPLETE',L=length,mesh=[mesh,mesh,8],pairs=rows,shells=shells,
          stationarity_meV=max(abs(np.array(records[0]['torque_eV'])))*1000,
          convention='unit spins; E=sum_i<j J_ij e_i dot e_j; positive J AFM',
          interpretation='periodic sums; no division by image multiplicity',
-         previous_four_Ni_max_difference_meV=prior,
-         previous_four_Ni_same_k_mesh=(mesh==4) if prior is not None else None,
          k_mesh_converged=False,physical_DFT_accuracy_validated=False))
 
 

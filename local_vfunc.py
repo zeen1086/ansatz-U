@@ -30,15 +30,12 @@ def save(path: Path, value: dict) -> None:
 
 
 def runtime_path(directory: Path, meta: dict) -> Path:
-    rule = meta.get('prediction_rule')
-    if rule is None:  # Legacy packages embed the retired iterative evaluator.
-        schema = json.loads((directory/'model/model.json').read_text())['schema']
-        if schema != 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2':
-            raise ValueError('Legacy export requires coupled weights with L; re-export from the original coupled source')
-        return LOCAL_CODE
-    if rule != PREDICTION_RULE:
-        raise ValueError(f'Unsupported prediction rule: {rule}; re-export from the original coupled source')
-    return (directory/'runtime').resolve()
+    if meta.get('prediction_rule') != PREDICTION_RULE:
+        raise ValueError('Unsupported model prediction rule')
+    code = (directory/'runtime').resolve()
+    if not all((code/name).is_file() for name in RUNTIME):
+        raise ValueError('Incomplete model runtime')
+    return code
 
 
 def runtime(directory: Path, meta: dict | None = None):
@@ -61,10 +58,8 @@ def export(source: Path, code: Path, structure: Path, output: Path,
     if not np.isfinite(scalar_offset_eV):
         raise ValueError('Finite, fixed scalar energy offset required')
     meta = json.loads((source/'model/model.json').read_text())
-    if meta['schema'] == 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1':
-        raise ValueError('One-way weights discarded L; re-export from the original coupled source')
     if meta['schema'] not in ('LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2', 'LANIO2_ACTIVE_LOCAL_GRID_SINGLE_RESPONSE_V1'):
-        raise ValueError('Unsupported active-channel source model')
+        raise ValueError('Unsupported source model schema')
     with np.load(structure, allow_pickle=False) as z:
         cell, positions, species, ni = (z[k].copy() for k in ('cell','positions','species','ni'))
     if len(ni) != 4 or cell.shape != (3, 3):
@@ -136,12 +131,12 @@ def metadata(directory: Path) -> dict:
     if meta['schema'] != SCHEMA:
         raise ValueError('Not a native V1 V_func_tmp package')
     if len(meta['model_id'])!=64:raise ValueError('Model ID must contain 64 characters')
+    runtime_path(directory, meta)
     return meta
 
 
 def verify(directory: Path) -> dict:
     meta = metadata(directory)
-    runtime_path(directory, meta)
     for name, expected in meta['files'].items():
         path=directory/name
         if not path.is_file() or (isinstance(expected,dict) and path.stat().st_size!=expected['bytes']):
@@ -322,7 +317,7 @@ def evaluate(directory: Path, structure: Path, output: Path,
             if not np.allclose(chart_spins(base, sites, basis, eta), s.spins, rtol=0, atol=1e-12):
                 raise ValueError('Structure spins do not match the fixed chart')
         elif any(key in data for key in CHART_KEYS):
-            raise ValueError('Chart structures require --tangent; legacy y derivatives are incompatible')
+            raise ValueError('Chart structures require --tangent; global-y derivatives are incompatible')
     output.mkdir(parents=True, exist_ok=False)
     def value(spins):
         pred = bundle.model.predict(replace(s, spins=spins))

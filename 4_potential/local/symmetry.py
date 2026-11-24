@@ -48,7 +48,7 @@ def to_channels(a: np.ndarray) -> dict[str, np.ndarray]:
 
 
 def d4h() -> tuple[np.ndarray, dict[str, np.ndarray]]:
-    """16 local point actions from joint_features.f90, without four-site shifts."""
+    """16 local D4h point actions, without four-site shifts."""
     spatial, orbital = [], []
     for sw in (0, 1):
         for sx in (1, -1):

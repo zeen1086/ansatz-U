@@ -155,7 +155,7 @@ class CurvatureTests(unittest.TestCase):
                  patch.object(local_vfunc,'read_structure',return_value=(structure,2,np.arange(4))):
                 report=local_vfunc.evaluate(root,source,root/'out',self.sites,.001,tangent=True)
                 with self.assertRaisesRegex(ValueError,'--tangent'):
-                    local_vfunc.evaluate(root,source,root/'legacy',self.sites,.001)
+                    local_vfunc.evaluate(root,source,root/'y_axis',self.sites,.001)
             self.assertEqual(report['derivative_modes'],[(2,1),(2,2),(4,1),(4,2)])
             for k,site in enumerate(self.sites):
                 jac=chart_jacobian(self.base[site-1],self.basis[k],eta[k])

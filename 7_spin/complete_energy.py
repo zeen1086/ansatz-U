@@ -14,8 +14,8 @@ from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
 from spin_coordinates import curvature_cases, derivative_files
 ENERGY=CONFIG['complete_energy']
-R=Path(ENERGY['work']);OLD=WORK;MIN=Path(ENERGY['reference_run'])
-SHARED=Path(ENERGY.get('shared_work', ENERGY['work']))
+R=Path(ENERGY['work']);MIN=Path(ENERGY['reference_run'])
+SHARED=Path(ENERGY['shared_work'])
 SIZES=ENERGY['sizes']
 
 def case_definition(L):
@@ -107,13 +107,13 @@ def barrier(name,z):
 
 def points(L,z):return [(8*(2*x+y)+z,np.array([x/2,y/2,z/8])) for x,y in product(range(2),repeat=2)]
 def folder(L,case):return R/f'L{L:02}/case_{case:02}'
-def oldcase(L,case):
+def coefficient_case(L,case):
     source=ENERGY.get('reuse_cases',{}).get(str(L))
     return Path(source)/f'case_{case:02}' if source else R/f'coefficients/L{L:02}/case_{case:02}'
 def cache_identity():
     # Metadata and declared model IDs bind inputs without rereading large payloads.
-    files = {'bloch': OLD/'basis/bloch.npy', 'background': OLD/'basis/pure_H0.au',
-             'projection': OLD/'RVR/PROJECTION.json', 'rvr': OLD/'RVR/B_general', 'model': INTERFACE/'V_func_tmp/V_FUNC.json'}
+    files = {'bloch': WORK/'basis/bloch.npy', 'background': WORK/'basis/pure_H0.au',
+             'projection': WORK/'RVR/PROJECTION.json', 'rvr': WORK/'RVR/B_general', 'model': INTERFACE/'V_func_tmp/V_FUNC.json'}
     for folder, label in [(REF, 'wannier'), (MIN/'results', 'reference_results'),
                           (MIN/'inputs/reference_actual', 'reference_density')]:
         for path in sorted(folder.iterdir()):
@@ -144,7 +144,7 @@ def bind_cache(identity):
 
 
 def stage_bloch(z):
-    src=np.load(OLD/'basis/bloch.npy',mmap_mode='r')
+    src=np.load(WORK/'basis/bloch.npy',mmap_mode='r')
     if src.shape != (8,8,8,NG,30) or src.dtype != np.dtype('complex128'):
         raise ValueError('Unexpected common Bloch grid or dtype')
     return src[:,:,z]
@@ -161,7 +161,7 @@ def cached_operators(L,k,identity,st):
         np.save(out/'h0.npy',h0);np.save(out/'projectors.npy',aa)
         np.save(out/'native_projectors.npy',native_a)
         # Fortran stream: explicit model/basis, dimensions, k, then native-order matrices.
-        basis=json.loads((OLD/'RVR/PROJECTION.json').read_text())['basis_id']
+        basis=json.loads((WORK/'RVR/PROJECTION.json').read_text())['basis_id']
         with (out/'native.bin').open('wb') as f:
             f.write(b'V1_BG_CACHE_V1  '.ljust(16))
             f.write(struct.pack('<2i',L,60*L*L));f.write(np.asarray(k,dtype='<f8').tobytes())
@@ -257,7 +257,7 @@ def value_offset(path: Path, length: int, ueff: float) -> float:
 
 def spectrum(L,case,z,paths,ops,rvr,ueff):
     p=folder(L,case);p.mkdir(parents=True,exist_ok=True)
-    source=oldcase(L,case)
+    source=coefficient_case(L,case)
     batch=points(L,z)
     coeff=source/'coeff/value.bin';offset=value_offset(coeff,L,ueff)
     native_batch(coeff,np.array([k for _,k in batch]),[p/f'H_{ki:04}' for ki,_ in batch],p,60*L*L,rvr=rvr,background_files=[ops[ki]/'native.bin' for ki,_ in batch])
@@ -396,17 +396,17 @@ def torque_stage(L,z,rvr,ops,ueff):
         for case in chunk:
             p=folder(L,case);mu=json.loads((p/'MU.json').read_text())['mu'];al=[json.loads((p/f'alpha_z{i}.json').read_text()) for i in range(8)];alpha=sum(a['numerator'] for a in al)/sum(a['denominator'] for a in al)
             sites=readout_sites(definition,case)
-            derivs=[derivative(oldcase(L,case)/'coeff'/name) for name in derivative_files(sites,tangent)]
+            derivs=[derivative(coefficient_case(L,case)/'coeff'/name) for name in derivative_files(sites,tangent)]
             labels=[(s,a) for s in sites for a in (1,2)] if tangent else sites
             if any(d['Ueff'] != ueff for d in derivs):
-                raise ValueError(f'Derivative coefficient Ueff differs from model Ueff {ueff}: {oldcase(L,case)}')
+                raise ValueError(f'Derivative coefficient Ueff differs from model Ueff {ueff}: {coefficient_case(L,case)}')
             for ki,k in points(L,z):
                 dest=p/f'torque_k{ki:04}.npz'
                 if valid_npz(dest,{'torque':(len(labels),),'sites':np.shape(labels),'imaginary':()}):continue
                 b=np.load(p/f'k_{ki:04}.npz');e,Q=b['e'],b['Q'];ae=np.load(p/f'adjoint_{ki:04}.npz')['Ae'];ae.flat[::len(e)+1]-=alpha;f,fp,_=fermi(e,mu);Z=Q@(loewner(e,f,fp)*ae)@Q.conj().T;G=fold_unitary(L,k)
                 densities.append(-G.conj().T@Z@G);entries.append((case,ki,k,dest,labels));ds.append(derivs)
         if entries:
-            vals,im,stats=contract_batch(rvr,OLD/'basis/pure_H0.au',np.array([a[2] for a in entries]),np.array(densities),ds[0],workers=1,derivatives_by_point=ds,projectors_by_point=[np.load(ops[a[1]]/'native_projectors.npy',mmap_mode='r') for a in entries])
+            vals,im,stats=contract_batch(rvr,WORK/'basis/pure_H0.au',np.array([a[2] for a in entries]),np.array(densities),ds[0],workers=1,derivatives_by_point=ds,projectors_by_point=[np.load(ops[a[1]]/'native_projectors.npy',mmap_mode='r') for a in entries])
             for row,v,imag in zip(entries,vals,im):atomic_npz(row[3],torque=v,sites=row[4],imaginary=imag)
             save(R/f'L{L:02}/torque_batch_{z}_{chunk[0]}.json',stats)
 
@@ -458,7 +458,7 @@ def prepare_coefficients(L,z):
         assert [(c['perturb_site_native_1based'],c['angle_deg']) for c in definition['angle_configurations']]==expected
     for i,case in enumerate(definition['angle_configurations']):
         if i%8!=z:continue
-        out=oldcase(L,i)
+        out=coefficient_case(L,i)
         base=spin_structure(L,case)
         sites=readout_sites(definition,i)
         if str(L) in ENERGY.get('reuse_cases',{}):
@@ -502,16 +502,16 @@ def main(z):
     for L in SIZES:
         prepare_coefficients(L,z)
     dv=abs(np.linalg.det(np.array(meta['primitive_cell_A'])/.529177210903))/NG
-    slab=stage_bloch(z);st=static(OLD/'basis/pure_H0.au');reference(z,slab,dv,identity,st,ueff);background(z,dv)
+    slab=stage_bloch(z);st=static(WORK/'basis/pure_H0.au');reference(z,slab,dv,identity,st,ueff);background(z,dv)
     cached=CONFIG.get('rvr_slices',{}).get(str(z))
     if cached:
         rvr=Path(cached)
     else:
         cache=shared_bundle(SHARED/'cache'/f'z{z}',dict(inputs=identity,kz=z/8,kind='rvr_slice'),
-                            lambda out:stage_slice(OLD/'RVR/B_general',out/'RVR.bin',z))
+                            lambda out:stage_slice(WORK/'RVR/B_general',out/'RVR.bin',z))
         rvr=cache/'RVR.bin'
     prefix,sectors,_,size=layout(rvr)
-    original,_,_,full_size=layout(OLD/'RVR/B_general')
+    original,_,_,full_size=layout(WORK/'RVR/B_general')
     if sectors!=(z/8,) or size!=full_size or prefix[:32]!=original[:32] or prefix[36:]!=original[36:]:
         raise ValueError('Cached RVR does not match the full source and kz')
     save(SHARED/f'reused_RVR_z{z}.json',dict(path=str(rvr),bytes=size))

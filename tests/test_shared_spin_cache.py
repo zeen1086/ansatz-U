@@ -64,7 +64,7 @@ class SharedCacheTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'RVR').mkdir()
             (root/'RVR/PROJECTION.json').write_text('{"basis_id":"'+('b'*64)+'"}')
-            with patch.object(driver,'SHARED',root),patch.object(driver,'OLD',root), \
+            with patch.object(driver,'SHARED',root),patch.object(driver,'WORK',root), \
                  patch.object(driver,'NG',32),patch.object(driver,'points',return_value=[(0,k)]):
                 paths,ops=driver.wave_cache(1,0,{'basis':'fixture'},st,slab)
                 np.testing.assert_allclose(np.load(paths[0]),wave[None],atol=1e-14)
@@ -87,7 +87,7 @@ class SharedCacheTests(unittest.TestCase):
                          'RVR/B_general','V_func_tmp/V_FUNC.json','refs/data.npz',
                          'reference/results/FIELDS.npz','reference/inputs/reference_actual/DENSITY.bin'):
                 p=root/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'input')
-            with patch.object(driver,'OLD',root),patch.object(driver,'INTERFACE',root), \
+            with patch.object(driver,'WORK',root),patch.object(driver,'INTERFACE',root), \
                  patch.object(driver,'REF',root/'refs'),patch.object(driver,'MIN',root/'reference'):
                 identity=driver.cache_identity()
                 for name in ('basis/bloch.npy','basis/pure_H0.au','RVR/PROJECTION.json',
@@ -98,7 +98,7 @@ class SharedCacheTests(unittest.TestCase):
                 current=driver.cache_identity()
                 self.assertEqual(driver.cache_identity(),current)
 
-    def test_binding_rejects_changed_inputs_and_adopts_legacy(self):
+    def test_binding_rejects_changed_inputs_and_registers_existing_data(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'input';source.write_bytes(b'first')
             identity={'input':common.input_digest(source)}

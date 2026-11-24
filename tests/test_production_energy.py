@@ -30,7 +30,7 @@ class ProductionEnergyTest(unittest.TestCase):
             path = Path(tmp)/'run.json'
             path.write_text(json.dumps(config))
             command = ('import complete_energy as c; '
-                       'print(c.ROOT); print(c.oldcase(4, 1)); print(c.oldcase(6, 1))')
+                       'print(c.ROOT); print(c.coefficient_case(4, 1)); print(c.coefficient_case(6, 1))')
             env = dict(os.environ, ANSATZ_RUN_CONFIG=str(path),
                        PYTHONPATH=str(repo/'7_spin'))
             result = subprocess.run([sys.executable, '-B', '-c', command], cwd=tmp,
@@ -38,7 +38,7 @@ class ProductionEnergyTest(unittest.TestCase):
             self.assertEqual(result.stdout.splitlines(), [str(Path(tmp)/'inputs'),
                 str(Path(tmp)/'existing/case_01'), str(Path(tmp)/'output/coefficients/L06/case_01')])
 
-    def test_shared_and_spin_layout_and_legacy_paths(self):
+    def test_shared_and_spin_layout_requires_explicit_paths(self):
         repo = Path(__file__).resolve().parents[1]
         config = json.loads((repo/'examples/7_spin/production.json').read_text())
         with tempfile.TemporaryDirectory() as tmp:
@@ -54,17 +54,19 @@ class ProductionEnergyTest(unittest.TestCase):
                        'print(c.SOURCE); print(c.WORK); print(c.SPINS); '
                        'print(r.case_root(4, 1, 2, .001)[2]); print(e.SHARED); print(e.folder(4, 1))')
             env = dict(os.environ, ANSATZ_RUN_CONFIG=str(path), PYTHONPATH=str(repo/'7_spin'))
-            for legacy in (False, True):
-                if legacy:
-                    del config['spin_work']
-                    del config['complete_energy']['shared_work']
+            path.write_text(json.dumps(config))
+            result = subprocess.run([sys.executable, '-B', '-c', command], cwd=tmp,
+                env=env, capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.splitlines(), list(map(str, [repo, shared, spins,
+                spins/'J/L04/mesh2_h0.001/case_01', shared/'complete', spins/'complete/L04/case_01'])))
+            for section, key in ((config, 'spin_work'), (config['complete_energy'], 'shared_work')):
+                value = section.pop(key)
                 path.write_text(json.dumps(config))
                 result = subprocess.run([sys.executable, '-B', '-c', command], cwd=tmp,
-                    env=env, capture_output=True, text=True, check=True)
-                output = shared if legacy else spins
-                energy_shared = spins/'complete' if legacy else shared/'complete'
-                self.assertEqual(result.stdout.splitlines(), list(map(str, [repo, shared, output,
-                    output/'J/L04/mesh2_h0.001/case_01', energy_shared, spins/'complete/L04/case_01'])))
+                    env=env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(key, result.stderr)
+                section[key] = value
 
     def test_complete_functional_and_fixed_electron_response(self):
         complete_readout.energy_selfcheck()
@@ -117,7 +119,7 @@ class ProductionEnergyTest(unittest.TestCase):
                                 points=lambda *_: [(1, k)], native_batch=assemble,
                                 barrier=lambda *_: None):
                 for case_index, offset in enumerate((-.7, .3)):
-                    coeff = complete_energy.oldcase(length, case_index)/'coeff'/'value.bin'
+                    coeff = complete_energy.coefficient_case(length, case_index)/'coeff'/'value.bin'
                     coeff.parent.mkdir(parents=True)
                     coeff.write_bytes(struct.pack('<16s8i64s2d', b'LANIO2_COEFF_V2 ',
                         1, 1, length, cells, 0, 0, 0, 0, complete_energy.CONFIG['model_id'].encode(),

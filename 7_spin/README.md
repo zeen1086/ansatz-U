@@ -68,7 +68,7 @@ F = Fband − Σk wk Tr[P(H−H0)]
 
 Complete energy uses the Wannier overlap metric. The band-free-energy entry diagonalizes H directly and requires an orthonormal input basis. At nonorthogonal interpolation points, identical smearing parameters alone do not make the band terms of the two entries equivalent.
 
-Native assembly represents the fixed scalar zero as `cI`. The complete-energy entry replaces it with `cS` in the folded basis, solves using `S^(-1/2)`, and saves the corrected H for torque evaluation. To recompute old results with this version, configure new `complete_energy.work` and `complete_energy.shared_work` directories. Original model coefficients may still be supplied through `reuse_cases`.
+Native assembly represents the fixed scalar zero as `cI`. The complete-energy entry replaces it with `cS` in the folded basis, solves using `S^(-1/2)`, and saves the corrected H for torque evaluation. Use consistent scalar-gauge conventions when comparing results. Existing matching model coefficients may be supplied through `reuse_cases`.
 
 ## Two-Site Transverse Curvature (K4)
 
@@ -89,7 +89,7 @@ Use fresh spin and shared complete-energy work directories. Supply the existing
 4, 6 and 8; `sites` must fit every configured size. Exactly two distinct sites
 and three positive outer steps `h, 2h, 4h` are supported. Omitted steps use the
 values above. The worker and summarizer entry points are unchanged. The band/J
-drivers do not implement K4; their legacy interface remains unchanged.
+drivers do not implement K4; their supported interface uses CASE definitions.
 
 For each selected spin `e0`, the code fixes orthonormal tangent columns `T` at
 the background and uses the sphere exponential chart
@@ -100,7 +100,7 @@ including at displaced points. The native derivative filenames are
 structure contains `chart_base_spins`, `chart_sites`, `chart_basis`, `chart_eta`
 and the matching displaced `spins`; use `local_vfunc.py evaluate --tangent`
 with `--derivative-sites` in the same order as `chart_sites`. Chart structures
-are rejected by the legacy y-axis derivative mode. Coefficient checkpoints
+are rejected by the global y-axis derivative mode. Coefficient checkpoints
 bind the chart arrays, derivative mode, step and coordinate source.
 
 The convention is `tau = -dF/deta`, `K = d²F/deta² = -d(tau)/deta`, with no
@@ -147,7 +147,7 @@ make local-rvr BUILD=/absolute/intel-build FC=ifort \
   LIBS='-mkl=parallel'
 ```
 
-See the [local RVR interface](../6_RVR/README.md) for V1 model export and compatibility. New exports package the single-response model, loader and predictor with the frozen parameters and the feature, symmetry and field kernels from `--code`. Legacy coupled exports without a prediction rule use the repository's current runtime with their original RVR binding. Explicit one-way exports require re-export from the original coupled weights. Use fresh spin and complete-energy work paths for the new prediction rule; runtime hashes invalidate old coefficient and result checkpoints.
+See the [local RVR interface](../6_RVR/README.md) for V1 model export and compatibility. New exports package the single-response model, loader and predictor with the frozen parameters and the feature, symmetry and field kernels from `--code`. Packages must declare `N_single_response_to_v_B` and include the complete runtime. Export the original coupled V1 weights with the current command to create a compatible package. Use fresh spin and complete-energy work paths when model or runtime inputs change.
 
 Standalone `local_vfunc.py evaluate` generates only the production-required `value.bin/dsite_XXXX.bin` and `PREDICTION.json` by default. `prediction.npz`, which duplicates these arrays, is generated only with `--keep-intermediates`. Batch drivers retain coefficients, indices, and completion markers needed for restart; they do not apply the temporary-file cleanup used after the single-configuration `cal_Hsk` command.
 
@@ -176,7 +176,6 @@ Configuration paths and data conventions:
 - `rvr_slices`: optional `{"0":"/node-local/z0/B_general", ...}`. Cache paths must be visible on the corresponding worker
   nodes and match the full RVR model, basis, dimensions, and kz. If omitted, slices are extracted from the full source.
 - `spin_work`: configuration-result root `spins/`, containing `J/` and `regression/`; `regression/RESULT.json` is an optional diagnostic report, not a prerequisite for calculation.
-- `old_J`: optional old four-Ni comparison file; the comparison is skipped if the file does not exist.
 
 The `complete_energy` configuration additionally requires:
 
@@ -277,7 +276,7 @@ Result files are written to temporary files and atomically replaced. QE stages u
 
 Retained `*.incomplete-*` directories and hidden temporary directories left by forcibly terminated processes are not reusable checkpoints. They may be removed after confirming that no writers are active; normal restart does not require deleting them first. Keep inputs and caches unchanged during execution.
 
-Configurations without `spin_work` continue to store configuration outputs under `work`. For complete energy, explicitly set separate `shared_work` and `work` directories for shared caches and current-run results.
+Set `spin_work` explicitly for spin-dependent outputs. Complete energy also requires explicit `shared_work` and `work` directories for shared caches and current-run results.
 
 ## Small Checks and Native Regression
 
@@ -336,7 +335,7 @@ Caches use per-entry file locks, write to temporary directories, and publish ato
 `*.partial-*` directories are not read; retries regenerate unpublished entries. Remove leftover temporary directories only after confirming
 that no writers remain. Missing files, byte-count mismatches, or identity mismatches in published caches raise errors
 rather than being silently overwritten. Archive damaged entries before rebuilding with the same inputs; use new
-`shared_work` and configuration-output directories when inputs or source code change. Old reference/cache directories without `INPUTS.json` print a NOTE and register the current identity; an existing mismatched identity still raises an error.
+`shared_work` and configuration-output directories when inputs or source code change. Existing reference/cache directories without `INPUTS.json` print a NOTE and register the current identity; an existing mismatched identity still raises an error.
 
 Caches are not automatically deleted after calculation. Wavefunctions alone for 32 k points occupy approximately
 `32 × L² × 57600 × 30 × 16` bytes: about 14.2/31.9/56.6 GB for L=4/6/8,
@@ -351,4 +350,4 @@ Missing or damaged files, dimension/format errors, model/cache identity mismatch
 
 Hamiltonian Hermiticity residuals above 1e-5 and reference-projection residuals above 1e-6 produce only diagnostic notes. Adjoint/direct derivative residuals above 1e-6 still raise errors.
 
-Re-exporting models or rebuilding projections generates new IDs. Update the configuration and use the corresponding new RVR; do not mix files from different exports. Legacy metadata can be read, but content digests are not copied into newly generated records.
+Re-exporting models or rebuilding projections generates new IDs. Update the configuration and use the corresponding new RVR; do not mix files from different exports. Generated records use declared IDs and file metadata for input identity.

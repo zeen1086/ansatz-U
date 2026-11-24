@@ -25,7 +25,6 @@ def module(name, relative):
     return result
 
 prepare = module("prepare_wannier", "5_wannier/prepare.py")
-rvr = module("prepare_rvr", "5_wannier/make_wan/prepare_rvr.py")
 
 
 class WorkflowTests(unittest.TestCase):
@@ -84,24 +83,6 @@ class WorkflowTests(unittest.TestCase):
             (base/"toy.win").write_text("dis_win_max=4\n")
             with self.assertRaises(ValueError): prepare.prepare(base,base/"invalid",p)
 
-    def test_wannier_to_rvr_grid_and_spin_order(self):
-        with tempfile.TemporaryDirectory() as directory:
-            base=Path(directory); raw=base/"raw"; raw.mkdir()
-            p={"nscf_dir":str(base),"func_dir":str(base),"convert_size_x":0,"convert_size_y":0,
-               "convert_size_z":0,"nspin":2,"nwan":1}
-            with (base/"V_HYC_dp").open("wb") as stream:
-                write_record(stream,np.array([2,2,1],dtype="<i4"))
-            vectors=np.array([[1,1,0],[0,0,0],[1,0,0],[0,1,0]],dtype="<i4")
-            with (base/"R_vec").open("wb") as stream:
-                write_record(stream,np.array([4],dtype="<i4")); write_record(stream,vectors)
-            wave=(np.arange(8)+1j*np.arange(8)[::-1]).reshape((1,4,2),order="F").astype("<c16")
-            with (raw/"wan_1").open("wb") as stream: write_record(stream,wave)
-            rvr.prepare(raw,base/"out",p)
-            got=np.fromfile(base/"out/wan_data/wan_1",dtype="<c16").reshape((1,4,2),order="F")
-            np.testing.assert_array_equal(got,wave[:,[3,0,1,2],:])
-            self.assertAlmostEqual(float(np.sum(abs(got)**2)),float(np.sum(abs(wave)**2)))
-            self.assertEqual(np.loadtxt(base/"out/cal_TF_1"),1)
-
     def test_isolated_generation(self):
         with tempfile.TemporaryDirectory() as directory:
             output=Path(directory)
@@ -122,7 +103,7 @@ class WorkflowTests(unittest.TestCase):
                 build([source],"gfortran",["-O0"],[])
                 self.assertEqual(binary.stat().st_mtime_ns,stamp)
                 self.assertEqual(subprocess.check_output([str(binary)],text=True).strip(),"30")
-                config.write_text(config.read_text().replace("rvr_chunk = 8192","rvr_chunk = 4096"))
+                config.write_text(config.read_text().replace("nr1 = 64","nr1 = 32"))
                 with self.assertRaises(RuntimeError): verify(source)
                 build([source],"gfortran",["-O0"],[]); verify(source)
                 original=binary.read_bytes()

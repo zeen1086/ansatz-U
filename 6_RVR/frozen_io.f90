@@ -10,7 +10,7 @@ contains
  subroutine read_model(path,m)
  character(*),intent(in)::path
  type(frozen_model),intent(out)::m
- ! Keep the LANIO2_AU_V1 layout; legacy KB/N0 fields are validated and discarded.
+ ! The LANIO2_AU_V1 layout includes reserved KB/N0 fields, validated and discarded.
  complex(dp),allocatable::kb(:,:)
  complex(dp)::n0(10,10)
  character(16)::magic

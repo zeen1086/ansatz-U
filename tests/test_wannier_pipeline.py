@@ -1,5 +1,4 @@
 from pathlib import Path
-import importlib.util
 import os
 import shutil
 import shlex
@@ -23,10 +22,10 @@ class WannierPipelineTests(unittest.TestCase):
         r=ROOT
         with tempfile.TemporaryDirectory() as directory:
             w=Path(directory)
-            p=load();p.update(nwan=1,wan_min=1,wan_max=1,n_func=3,nspin=1,nk1=1,nk2=1,nk3=1,
+            p=load();p.update(nwan=1,wan_min=1,wan_max=1,nspin=1,nk1=1,nk2=1,nk3=1,
                              convert_size_x=0,convert_size_y=0,convert_size_z=0,first_band=1,last_band=2,
-                             num_bands=2,nscf_dir=str(w/'wannier'),func_dir=str(w/'potential'))
-            wan=w/'wannier';wan.mkdir();pot=w/'potential';pot.mkdir();(wan/'WFN').mkdir();(wan/'disentangled').mkdir();(wan/'make_wan').mkdir()
+                             num_bands=2,nscf_dir=str(w/'wannier'))
+            wan=w/'wannier';wan.mkdir();(wan/'WFN').mkdir();(wan/'disentangled').mkdir();(wan/'make_wan').mkdir()
             (w/'parameter_mod.f90').write_text(fortran_module(p))
             for name, matrix in [('u_mat_HYC',np.ones((1,1,1),dtype='<c16')),
                                  ('u_dis_mat_HYC',np.array([1,1j],dtype='<c16').reshape((2,1,1))/np.sqrt(2))]:
@@ -37,8 +36,6 @@ class WannierPipelineTests(unittest.TestCase):
             with (wan/'V_HYC_dp').open('wb') as stream:write_record(stream,np.array([2,1,1],dtype='<i4'))
             for band,wave in enumerate(([1,1],[1,-1]),start=1):
              with (wan/'WFN'/f'wfn_k1_b{band}_vec_dp').open('wb') as stream:write_record(stream,np.array(wave,dtype='<c16'))
-            with (pot/'R_vec').open('wb') as stream:
-             write_record(stream,np.array([2],dtype='<i4'));write_record(stream,np.array([[1,0,0],[0,0,0]],dtype='<i4'))
             env=dict(os.environ,MKL_NUM_THREADS='1',OMP_NUM_THREADS='1',I_MPI_PIN='0')
             for name,sources in [('dis',['5_wannier/disentangled/make_dis_mpi.f90']),('wan',['5_wannier/make_wan/make_wan_fun_mpi.f90'])]:
              cmd=[compiler]+flags+[str(w/'parameter_mod.f90')]+[str(r/s) for s in sources]+['-o',str(w/name)]+([] if 'mpiifort' in compiler else shlex.split(os.environ.get('LIBS', DEFAULT_LIBS)))
@@ -48,10 +45,6 @@ class WannierPipelineTests(unittest.TestCase):
             with (wan/'make_wan/wan_1').open('rb') as stream:a=read_array(stream,'<c16',(1,2,1))
             expected=np.array([1+1j,1-1j]).reshape((1,2,1))/2
             np.testing.assert_allclose(a,expected,atol=1e-14,rtol=0)
-            spec=importlib.util.spec_from_file_location('prepare_rvr',r/'5_wannier/make_wan/prepare_rvr.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
-            m.prepare(wan/'make_wan',wan/'make_wan/converted',p)
-            converted=np.fromfile(wan/'make_wan/converted/wan_data/wan_1',dtype='<c16').reshape((1,2,1),order='F')
-            np.testing.assert_allclose(converted,a[:,[1,0],:],atol=1e-14,rtol=0)
             self.assertAlmostEqual(float(np.sum(abs(a)**2)),1.0,places=13)
 
 

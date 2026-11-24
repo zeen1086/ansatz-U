@@ -40,9 +40,9 @@ class ConfigurationTests(unittest.TestCase):
         self.assertIn('write_v_qe=.false.',render(p)[ROOT/'1_scf/print_V.in'])
 
     def test_rejects_inconsistent_parameters(self):
-        for old,new in [('nwan = 30','nwan = 20'),('period_x = 2','period_x = 3'),
-                        ('nk3 = 8','nk3 = 0'),('n_func = 3','n_func = 6'),
-                        ('selected_eta = 1','selected_eta = 2'),('eta = 0.05','eta = nan'),
+        for old,new in [('nwan = 30','nwan = 20'),('convert_size_x = 1','convert_size_x = 4'),
+                        ('nk3 = 8','nk3 = 0'),('nspin = 1','nspin = 3'),
+                        ('split_nspinor = 1','split_nspinor = 0'),('ecutwfc = 100.0','ecutwfc = nan'),
                         ('export_grid = "smooth"','export_grid = "invalid"'),
                         ('num_bands = 50','num_bands = 49')]:
             with self.subTest(new=new),self.assertRaises(ValueError):self.altered(old,new)
@@ -63,9 +63,9 @@ class ConfigurationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             work=Path(directory)
             (work/'parameter_mod.f90').write_text(fortran_module(load()))
-            (work/'probe.f90').write_text('program probe\nuse parameter_mod\ninteger::row\ncall read_row_index(row)\nprint *,p_nwan,p_n_func,p_nr1,row\nend\n')
+            (work/'probe.f90').write_text('program probe\nuse parameter_mod\ninteger::row\ncall read_row_index(row)\nprint *,p_nwan,p_split_nspinor,p_nr1,row\nend\n')
             subprocess.run(['gfortran','parameter_mod.f90','probe.f90','-o','probe'],cwd=work,check=True)
-            self.assertEqual(subprocess.check_output([str(work/'probe'),'7'],text=True).split(),['30','3','64','7'])
+            self.assertEqual(subprocess.check_output([str(work/'probe'),'7'],text=True).split(),['30','1','64','7'])
             for arg in ('0','bad','61'):
                 self.assertNotEqual(subprocess.run([str(work/'probe'),arg],capture_output=True).returncode,0)
 

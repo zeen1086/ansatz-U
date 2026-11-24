@@ -1,5 +1,5 @@
 """Native spatial reconstruction and versioned direct-model storage."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 import json
 from pathlib import Path
 import numpy as np
@@ -9,25 +9,7 @@ from model import LocalModel, Reference
 from symmetry import REP, finite, require
 
 SINGLE_RESPONSE_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_SINGLE_RESPONSE_V1'
-ONE_WAY_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'
 COUPLED_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2'
-WARM_SCHEMAS = ('LANIO2_GEOMETRIC_FEEDBACK_V1', 'LANIO2_SEPARATE_LOCAL_GRID_FEEDBACK_V1')
-
-
-@dataclass(frozen=True)
-class LossConfig:
-    v: float
-    B: float
-    N: float
-    n: float
-    m: float
-    lambda_density: float
-    multiply_N_by_U2: bool = False
-
-    def __post_init__(self) -> None:
-        require(all(np.isfinite(x) and x > 0 for x in (self.v, self.B, self.N, self.n, self.m)),
-                'loss scales must be frozen positive values')
-        require(self.lambda_density == 0, 'direct model excludes auxiliary density loss')
 
 
 def save_model(model: LocalModel, directory: Path, training_record: dict | None = None) -> None:
@@ -49,7 +31,9 @@ def save_model(model: LocalModel, directory: Path, training_record: dict | None 
 
 
 def _import_coupled_weights(model: LocalModel, data, meta: dict) -> None:
-    # Preserve both effective maps before replacing the old L with A=L K.
+    # Compile the normalized source maps into A=L K without changing the stored Q head.
+    rho = meta['rho']
+    require(np.isfinite(rho) and 0 < rho < 1, 'invalid source contraction threshold')
     projected_k = model.occupation_to_field_maps()
     projected_l = {}
     k_norm_sq = l_norm_sq = 0.
@@ -64,30 +48,20 @@ def _import_coupled_weights(model: LocalModel, data, meta: dict) -> None:
         k_norm_sq += multiplicity * np.sum((coords @ projected_k['K_' + sector])**2)
         l_norm_sq += multiplicity * np.sum((lmap @ np.linalg.inv(coords))**2)
     norm_product = np.sqrt(k_norm_sq) * np.sqrt(l_norm_sq)
-    require(np.isfinite(norm_product), 'legacy feedback norm overflow')
-    scale = min(1., np.sqrt(4*meta['rho']/norm_product)) if norm_product else 1.
-    for sector, column, refname in (('se', 0, 'p_scalar'), ('vo', 1, 'p_spin')):
+    require(np.isfinite(norm_product), 'source feedback norm overflow')
+    scale = min(1., np.sqrt(4*rho/norm_product)) if norm_product else 1.
+    for sector in ('se', 'vo'):
         model.params['K_' + sector] *= scale
         model.params['A_' + sector] = scale**2 * projected_l[sector] @ projected_k['K_' + sector]
-        if meta['schema'] in WARM_SCHEMAS:
-            # Pre-V2 checkpoints stored the uncompensated occupation head.
-            lmap = scale * projected_l[sector]
-            model.params['Q_' + sector] += lmap @ model.params['p_' + sector]
-            model.params['b_Q_' + sector] += lmap @ (
-                model.params['b_p_' + sector] - getattr(model.reference, refname)/model.scale[:, column])
 
 
-def load_model(directory: Path, warm=False):
+def load_model(directory: Path):
     meta = json.loads((directory/'model.json').read_text())
     schema = meta['schema']
-    require(schema != ONE_WAY_SCHEMA,
-            'One-way archive lacks L; re-export from the original coupled model to recover its response')
-    require(schema in (SINGLE_RESPONSE_SCHEMA, COUPLED_SCHEMA) or (warm and schema in WARM_SCHEMAS), 'unsupported model schema')
-    require(schema not in WARM_SCHEMAS or meta.get('p_feature_maps') is None,
-            'warm model with p_feature_maps cannot be compensated exactly')
+    require(schema in (SINGLE_RESPONSE_SCHEMA, COUPLED_SCHEMA), 'unsupported model schema')
     ref = Reference(**{k: v if k == 'source' else np.array(v)
                        for k, v in meta['reference'].items()})
-    args = (FeatureSpec(**meta['feature']), np.array(meta['p_scales']), ref, meta.get('rho'))
+    args = (FeatureSpec(**meta['feature']), np.array(meta['p_scales']), ref)
     model = LocalModel(*args, p_representation=np.array(meta['p_representation']), ueff=meta['ueff'])
     model.v_channels=meta.get('v_channels',model.np)
     model.feature_scales = {k: np.array(v) for k, v in meta['feature_scales'].items()}

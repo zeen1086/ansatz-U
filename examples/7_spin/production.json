@@ -6,7 +6,6 @@
   "references": "/absolute/repo/7_spin/shared/wannier/references",
   "work": "/absolute/repo/7_spin/shared",
   "model_id": "0000000000000000000000000000000000000000000000000000000000000000",
-  "old_J": "/absolute/optional/Jij_periodic_meV.csv",
   "rvr_slices": {},
   "complete_energy": {
     "work": "/absolute/repo/7_spin/spins/complete_energy",

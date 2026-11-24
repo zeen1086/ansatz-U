@@ -28,10 +28,17 @@ class ExportRecordTests(unittest.TestCase):
             self.assertEqual(set(meta),{'schema','prediction_rule','files','primitive_cell_A','Ni_fractional','primitive_motif','primitive_grid','scalar_offset_eV','scalar_gauge','Ueff_eV','ncoeff','spin_order','Hamiltonian_order','no_refit','model_id','source_bundle','source_code','native_geometry_bytes'})
             self.assertEqual(api.runtime_path(model,meta), (model/'runtime').resolve())
             self.assertEqual((model/'runtime/model.py').read_bytes(),(api.LOCAL_CODE/'model.py').read_bytes())
-            self.assertEqual(api.runtime_path(model,{}),api.LOCAL_CODE)
             self.assertEqual(meta['prediction_rule'],'N_single_response_to_v_B')
-            with self.assertRaisesRegex(ValueError,'re-export from the original coupled source'):
-                api.runtime_path(model,dict(prediction_rule='N_dir_to_v_B'))
+            for rule in (None, 'unsupported'):
+                invalid = meta.copy()
+                if rule is None:invalid.pop('prediction_rule')
+                else:invalid['prediction_rule']=rule
+                (model/'V_FUNC.json').write_text(json.dumps(invalid))
+                with self.assertRaisesRegex(ValueError,'Unsupported model prediction rule'):
+                    api.metadata(model)
+            (model/'V_FUNC.json').write_text(json.dumps(meta))
+            with self.assertRaisesRegex(ValueError,'Incomplete model runtime'):
+                api.runtime_path(root/'missing-runtime',meta)
             self.assertTrue(all(set(v)=={'bytes'} for v in meta['files'].values()))
             bg=root/'background';bg.write_bytes(b'fixture')
             Path(str(bg)+'.json').write_text(json.dumps(dict(kind='pure_H0_no_local_fields_no_HU',background_id='fixture')))
@@ -46,14 +53,11 @@ class ExportRecordTests(unittest.TestCase):
             source_meta['schema']='LANIO2_ACTIVE_LOCAL_GRID_SINGLE_RESPONSE_V1'
             (source/'model/model.json').write_text(json.dumps(source_meta))
             api.export(source,code,structure,root/'single-response',0.)
-            source_meta['schema']='LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'
+            source_meta['schema']='unsupported'
             (source/'model/model.json').write_text(json.dumps(source_meta))
-            with self.assertRaisesRegex(ValueError,'discarded L'):
-                api.export(source,code,structure,root/'one-way',0.)
-            self.assertFalse((root/'one-way').exists())
-            (model/'model/model.json').write_text(json.dumps(source_meta))
-            with self.assertRaisesRegex(ValueError,'coupled weights with L'):
-                api.runtime_path(model,{})
+            with self.assertRaisesRegex(ValueError,'Unsupported source model schema'):
+                api.export(source,code,structure,root/'unsupported',0.)
+            self.assertFalse((root/'unsupported').exists())
             (model/'C_v_local.npy').write_bytes(b'broken')
             with self.assertRaisesRegex(ValueError,'truncated'):api.verify(model)
 
