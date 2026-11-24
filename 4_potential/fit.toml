@@ -1,0 +1,27 @@
+# Copy outside the repository and set paths to extract_labels.py outputs.
+# Defaults define a new fit; they do not reproduce historical frozen weights.
+[data]
+labels = ["/absolute/labels/fm", "/absolute/labels/Neel_anchor"]
+weights = [1.0, 1.0]
+
+[features]
+radial_lengths_A = [2.0, 4.0]
+scalar_degree = 4
+vector_degree = 3
+
+[kernels]
+# Four D4h spatial channels per length; native cutoff is fixed at 6 angstrom.
+radial_lengths_A = [0.6, 1.0, 1.5, 2.0, 3.0, 4.0]
+
+[loss]
+scalar_scale_eV = 1.0
+magnetic_scale_eV = 1.0
+occupation_scale = 0.1
+regularization = 1e-8
+
+[optimizer]
+max_iterations = 200
+gradient_tolerance = 1e-6
+loss_tolerance = 1e-12
+checkpoint_every = 10
+seed = 0

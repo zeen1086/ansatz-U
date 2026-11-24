@@ -9,7 +9,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(root))
     loader=unittest.TestLoader()
     suite=loader.discover(str(root/"tests"),pattern="test_*.py",top_level_dir=str(root/"tests"))
-    suite.addTests(loader.discover(str(root/"4_potential"),pattern="test_labels.py",
+    suite.addTests(loader.discover(str(root/"4_potential"),pattern="test_*.py",
                                   top_level_dir=str(root/"4_potential")))
     result=unittest.TextTestRunner(verbosity=2).run(suite)
     print(f"Passed: {result.testsRun-len(result.failures)-len(result.errors)-len(result.skipped)}; "

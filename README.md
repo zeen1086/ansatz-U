@@ -1,12 +1,12 @@
 # ansatz+U
 
-One supported workflow for the frozen LaNiO₂ V1 model: export existing weights, prepare Wannier/RVR inputs, and calculate Hamiltonians, energies, and torques. The repository does not provide a complete V1 training command. Model weights, reference densities, and Wannier data must be supplied separately.
+One LaNiO₂ single-response workflow: prepare SCF labels, fit a model, export it, prepare Wannier/RVR inputs, and calculate Hamiltonians, energies, and torques. Existing frozen V1 weights remain usable. Scientific labels, model weights, reference densities, and Wannier data are external files.
 
 | Directory | Contents |
 |---|---|
 | `0_QE` | QE 7.6 source modifications, installation, and build scripts |
 | `1_scf`–`3_band_no_mag` | Structure, SCF, and band input templates |
-| `4_potential` | Magnetic-configuration generation, SCF-to-v/B/N label extraction, and frozen V1 inference sources |
+| `4_potential` | Magnetic configurations, SCF-to-v/B/N labels, single-response fitting, spatial kernels, and inference |
 | `5_wannier` | NSCF/Wannier templates and wavefunction/projector format conversion |
 | `6_RVR` | Current V1 local spatial-kernel projection, merging, and background/projector readers |
 | `7_spin` | V1 Hamiltonians, batch calculations, and complete-energy readout |
@@ -17,9 +17,10 @@ The root contains five tracked files: this README, `local_vfunc.py` (the V1 comm
 
 ## Current V1 workflow
 
-At fixed geometry, the frozen iteration-30 V1 weights use one explicit occupation response: `N0 = sigmoid(Q0)`, then `N1 = sigmoid(Q0 + A(N0 - N_ref))`, with the normalized maps compiled into `A = L K`. The scalar and magnetic coefficients are `p = p0 + K(N1 - N_ref)`; the Hamiltonian uses `VU = Ueff (I/2 - N1)`. There is no fixed-point iteration or refit. Projecting its occupied states gives a separate output occupation. See the [native RVR guide](6_RVR/README.md) for export compatibility and commands.
+At fixed geometry, the model uses one explicit occupation response: `N0 = sigmoid(Q0)`, then `N1 = sigmoid(Q0 + A(N0 - N_ref))`. The scalar and magnetic coefficients are `p = p0 + K(N1 - N_ref)`; the Hamiltonian uses `VU = Ueff (I/2 - N1)`. New fitting optimizes `A` directly, with no fixed-point iteration or old feedback trainer. For existing frozen iteration-30 weights, export retains the normalized source maps compiled into `A = L K` without refitting. Projecting occupied Hamiltonian states gives a separate output occupation. See the [fitting guide](4_potential/README.md#fit-the-single-response-model) and [native RVR guide](6_RVR/README.md).
 
 ```text
+4_potential/extract_labels.py → 4_potential/fit.py → model bundle
 local_vfunc.py export / export-background
   → prepare-projection
   → local/rvr prepare/project/combine → B_general
@@ -41,6 +42,7 @@ New calculations retain essential results by default. The unified `local/rvr pre
 
 ## Choose your starting point
 
+- **Converged SCF label packages:** use [single-response fitting](4_potential/README.md#fit-the-single-response-model), then export its model bundle through the same interface below.
 - **Existing exported model, RVR, and background:** start with the single-configuration command in [6_RVR](6_RVR/README.md#4-reuse-across-supercells-and-spin-configurations), then use [7_spin](7_spin/README.md) for energies and torques.
 - **Existing frozen weights and Wannier data:** follow [6_RVR](6_RVR/README.md) from export through projection.
 - **Preparing QE and Wannier inputs:** use the preparation tools below. These stages do not train the frozen V1 model.
