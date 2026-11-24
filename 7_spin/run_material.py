@@ -136,10 +136,11 @@ def kz_groups(k: np.ndarray):
 def prediction_identity():
     if str(SOURCE) not in sys.path:
         sys.path.insert(0,str(SOURCE))
-    from local_vfunc import RUNTIME, runtime_path
+    from local_vfunc import runtime_names, runtime_path
     model = INTERFACE/'V_func_tmp'
-    code = runtime_path(model, json.loads((model/'V_FUNC.json').read_text()))
-    return {f:input_digest(code/f) for f in RUNTIME}
+    meta = json.loads((model/'V_FUNC.json').read_text())
+    code = runtime_path(model, meta)
+    return {f:input_digest(code/f) for f in runtime_names(meta)}
 
 
 def coefficient_identity(structure, sites, step, *, tangent=False):

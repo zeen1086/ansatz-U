@@ -16,15 +16,6 @@ convert_size_z = 1
 a0 = 7.48180367
 celldm3 = 0.85231865
 
-[potential]
-split_nspinor = 1
-split_super_x = 2
-split_super_y = 2
-split_super_z = 1
-atom_super_x = 2
-atom_super_y = 2
-atom_super_z = 1
-
 [qe]
 prefix = "LaNiO2"
 export_grid = "smooth"

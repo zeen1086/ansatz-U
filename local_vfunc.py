@@ -19,7 +19,7 @@ from tools.spin_coordinates import CHART_KEYS, chart_spins, derivative_files
 SCHEMA = 'LANIO2_LOCAL_VFUNC_V2'
 PREDICTION_RULE = 'N_single_response_to_v_B'
 LOCAL_CODE = Path(__file__).resolve().parent/'4_potential/local'
-RUNTIME = ('features.py', 'symmetry.py', 'model.py', 'workflow.py', 'predict.py')
+RUNTIME = ('features.py', 'symmetry.py', 'model.py', 'workflow.py')
 DATA = ('C_v_local.npy', 'C_B_local.npy', 'local_grid.npz', 'KERNELS.json',
         'model/model.json', 'model/parameters.npz')
 
@@ -29,24 +29,32 @@ def save(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, indent=2, allow_nan=False)+'\n')
 
 
+def runtime_names(meta: dict) -> tuple[str, ...]:
+    # Previously exported V1 packages own their separate bundle loader.
+    return RUNTIME + (('predict.py',) if 'runtime/predict.py' in meta['files'] else ())
+
+
 def runtime_path(directory: Path, meta: dict) -> Path:
     if meta.get('prediction_rule') != PREDICTION_RULE:
         raise ValueError('Unsupported model prediction rule')
     code = (directory/'runtime').resolve()
-    if not all((code/name).is_file() for name in RUNTIME):
+    if not all((code/name).is_file() for name in runtime_names(meta)):
         raise ValueError('Incomplete model runtime')
     return code
 
 
 def runtime(directory: Path, meta: dict | None = None):
-    code = runtime_path(directory, metadata(directory) if meta is None else meta)
+    meta = metadata(directory) if meta is None else meta
+    code = runtime_path(directory, meta)
     # Frozen modules use their original absolute imports; never silently mix versions.
-    for name in (Path(f).stem for f in RUNTIME):
+    names = runtime_names(meta)
+    for name in (Path(f).stem for f in names):
         old = sys.modules.get(name)
         if old is not None and Path(old.__file__).resolve().parent != code:
             raise RuntimeError(f'Conflicting model module {name}; use a fresh process')
     sys.path.insert(0, str(code))
-    return importlib.import_module('predict'), importlib.import_module('features')
+    loader = 'predict' if 'predict.py' in names else 'workflow'
+    return importlib.import_module(loader), importlib.import_module('features')
 
 
 def export(source: Path, code: Path, structure: Path, output: Path,
@@ -86,7 +94,7 @@ def export(source: Path, code: Path, structure: Path, output: Path,
     if kernel['cutoff_A'] != 6. or meta['scalar_gauge'] != 'cell_mean_zero':
         raise ValueError('Unsupported frozen kernel/gauge definition')
     identity = {f: {'bytes':(source/f).stat().st_size} for f in DATA}
-    runtime_files = {f: (LOCAL_CODE if f in ('model.py', 'workflow.py', 'predict.py') else code)/f for f in RUNTIME}
+    runtime_files = {f: (LOCAL_CODE if f in ('model.py', 'workflow.py') else code)/f for f in RUNTIME}
     identity.update({f'runtime/{f}': {'bytes':path.stat().st_size} for f,path in runtime_files.items()})
     contract = dict(schema=SCHEMA, prediction_rule=PREDICTION_RULE, files=identity, primitive_cell_A=primitive.tolist(),
         Ni_fractional=centers[0].tolist(), primitive_motif=[list(m) for m in motif],
@@ -301,8 +309,8 @@ def evaluate(directory: Path, structure: Path, output: Path,
     meta = metadata(directory)
     if meta['schema'] != SCHEMA or step <= 0 or not np.isfinite(step):
         raise ValueError('Invalid package or derivative step')
-    predict, features = runtime(directory, meta)
-    bundle = predict.Bundle(directory)
+    storage, features = runtime(directory, meta)
+    bundle = storage.Bundle(directory)
     s, length, order = read_structure(structure, meta, features)
     if len(set(derivative_sites)) != len(derivative_sites) or any(i < 1 or i > len(s.ni) for i in derivative_sites):
         raise ValueError('Unique 1-based native Ni derivative sites required')

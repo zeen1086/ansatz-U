@@ -24,9 +24,7 @@ def load(path: Path | None = None) -> dict:
             if key in values:
                 raise ValueError(f"duplicate global parameter: {key}")
             values[key] = value
-    positive = ("nwan", "nspin", "nr1", "nr2", "nr3", "nk1", "nk2", "nk3",
-                "split_super_x", "split_super_y", "split_super_z", "atom_super_x", "atom_super_y", "atom_super_z",
-                "split_nspinor")
+    positive = ("nwan", "nspin", "nr1", "nr2", "nr3", "nk1", "nk2", "nk3")
     for key in positive:
         if type(values[key]) is not int or values[key] < 1:
             raise ValueError(f"{key} must be a positive integer")

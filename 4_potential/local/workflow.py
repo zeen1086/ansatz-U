@@ -1,4 +1,4 @@
-"""Native spatial reconstruction and versioned direct-model storage."""
+"""Versioned model storage and validated spatial-kernel bundle loading."""
 from dataclasses import asdict
 import json
 from pathlib import Path
@@ -82,4 +82,17 @@ def load_model(directory: Path):
         if schema != SINGLE_RESPONSE_SCHEMA:
             _import_coupled_weights(model, data, meta)
     return model
+
+
+class Bundle:
+    def __init__(self, path):
+        path = Path(path)
+        self.model = load_model(path/'model')
+        self.cv = np.load(path/'C_v_local.npy', mmap_mode='r', allow_pickle=False)
+        self.cb = np.load(path/'C_B_local.npy', mmap_mode='r', allow_pickle=False)
+        with np.load(path/'local_grid.npz', allow_pickle=False) as data:
+            self.geo = {key: data[key].copy() for key in data.files}
+        self.alpha = json.loads((path/'KERNELS.json').read_text())['scalar_bias_coefficient_per_Ni']
+        require(self.cv.shape == (len(self.geo['nodes']), self.model.np+1), 'scalar kernel shape')
+        require(self.cb.shape == (len(self.geo['nodes']), self.model.np), 'spin kernel shape')
 

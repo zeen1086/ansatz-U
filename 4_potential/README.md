@@ -181,8 +181,8 @@ back after interruption. Run only one optimizer per output directory. New
 labels or settings require a new directory. Existing model bundles are retained.
 
 The implementation is in `fit.py`, `training_data.py`, and `local/kernels.py`;
-the existing `local/model.py` and `local/workflow.py` remain the prediction,
-gradient and model-storage implementation.
+`local/model.py` provides predictions and gradients, while `local/workflow.py`
+stores models and loads complete model/spatial-kernel bundles.
 
 ## Offline checks
 

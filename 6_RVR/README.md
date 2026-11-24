@@ -32,6 +32,10 @@ The prediction rule is `N_single_response_to_v_B`: `N0 = sigmoid(Q0)`, `N1 = sig
 
 Exported packages must declare this `prediction_rule` and contain the complete runtime listed by `local_vfunc.py`. Unsupported or incomplete packages are rejected. Generate a current package from the original V1 weights with `export`; use its matching model-bound RVR and fresh work directories. Checkpoint identities include the packaged runtime.
 
+New exports contain four runtime modules, with bundle loading in `workflow.py`.
+Existing single-response packages with a separate `predict.py` remain readable;
+their loader is still included in runtime validation and checkpoint identities.
+
 ## 2. Prepare Projection Inputs
 
 Provide `wan_1 ... wan_30`: little-endian complex128 stream files in Fortran order with shape `(n_translation, n_grid)`, on the same grid as the model. The first line of `weighted_translations.dat` is the translation count; each subsequent line is `Rx Ry Rz weight`.

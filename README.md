@@ -52,9 +52,7 @@ New calculations retain essential results by default. The unified `local/rvr pre
 Requirements: Python 3.11+, NumPy, Fortran, and BLAS/LAPACK, plus the appropriate MPI/Wannier programs for those stages. Use an existing Python interpreter and keep generated inputs and builds outside the repository:
 
 ```sh
-export ANSATZ_BUILD_DIR=/absolute/external/ansatz-build
 /path/to/existing/python tools/configure.py --output-dir /absolute/external/case
-/path/to/existing/python tools/build.py 4_potential/V_split.f90
 ```
 
 Regenerate inputs and rebuild after changing `parameter`. `tools/run.py` checks build signatures and preserves the calling directory. See `0_QE/README.md` for QE installation. Set pseudopotential names and numerical grids in the templates to match the actual inputs. Structure, projection, and lattice templates come from the original LaNiO₂ inputs and do not modify the frozen model.
@@ -95,8 +93,6 @@ Cutoffs, smearing, convergence and mixing settings come from the supplied SCF in
 Generated cases start from atomic density and `atomic+random` wavefunctions. Historical calculations often reused converged saves; matching target directions alone does not reproduce that initialization or establish the same converged electronic state. Inspect SCF convergence and achieved magnetic directions after running QE.
 
 After each SCF converges, use [`4_potential/extract_labels.py`](4_potential/README.md) to rebuild its constraint-free scalar/B fields and read complete complex Hubbard N from the save. The exporter is built separately against the matching existing QE 7.6 libraries. Label packages remain external; this step does not train the model.
-
-`V_split` reads `polar2` and an explicit mapping file. Its first line is `n_spins n_channels n_cells`, followed by one line of 1-based spin indices per split cell. Cells follow x/y/z order, with z varying fastest; see `examples/4_potential/channel_map.dat`. Output retains the original `V1...` files and adds extracted `spinN/V_HYC_dp` and `spin_info`.
 
 V1 projection takes model-aligned raw `wan_1 ... wan_30` and `weighted_translations.dat`; see [6_RVR](6_RVR/README.md) for grid, translation, and weight matching. Exported models must declare `N_single_response_to_v_B` and include their complete runtime. Export the original coupled V1 weights with the current command to create a compatible package.
 

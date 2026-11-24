@@ -24,13 +24,23 @@ class RestartProtocolTests(unittest.TestCase):
             with patch.object(material,'INTERFACE',root):
                 with self.assertRaisesRegex(ValueError,'Unsupported model prediction rule'):
                     material.prediction_identity()
-                (model/'V_FUNC.json').write_text(json.dumps(dict(prediction_rule=PREDICTION_RULE)))
+                meta=dict(prediction_rule=PREDICTION_RULE, files={
+                    'runtime/'+f: {'bytes':len('# embedded fixture\n')} for f in RUNTIME})
+                (model/'V_FUNC.json').write_text(json.dumps(meta))
                 with self.assertRaisesRegex(ValueError,'Incomplete model runtime'):
                     material.prediction_identity()
                 (model/'runtime').mkdir()
                 for f in RUNTIME:(model/'runtime'/f).write_text('# embedded fixture\n')
                 before=material.prediction_identity()
+                self.assertEqual(set(before),set(RUNTIME))
                 (model/'runtime/model.py').write_text('# changed embedded model\n')
+                self.assertNotEqual(material.prediction_identity(),before)
+                (model/'runtime/predict.py').write_text('# original bundle loader\n')
+                meta['files']['runtime/predict.py']={'bytes':(model/'runtime/predict.py').stat().st_size}
+                (model/'V_FUNC.json').write_text(json.dumps(meta))
+                before=material.prediction_identity()
+                self.assertEqual(set(before),set(RUNTIME)|{'predict.py'})
+                (model/'runtime/predict.py').write_text('# changed bundle loader\n')
                 self.assertNotEqual(material.prediction_identity(),before)
                 (model/'V_FUNC.json').write_text(json.dumps(dict(prediction_rule='unsupported')))
                 with self.assertRaisesRegex(ValueError,'Unsupported model prediction rule'):

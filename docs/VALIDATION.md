@@ -17,6 +17,7 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 | Batch versus single native assembly | 40 component comparisons; identical results |
 | Actual V1 export → packaged runtime → synthetic RVR → native H/dH | Maximum error 9.155e-16 eV; all 15 compact/debug matrices identical |
 | Model format, packaged runtime, explicit output paths, cache identity, and restart checks | Passed |
+| Merged bundle loader and existing exported packages | Four-module exports and existing five-module layouts give identical synthetic p/N; missing loaders and mixed runtime modules are rejected; both layouts retain runtime identity checks |
 
 The shared NPY parsing and byte-count checks, current numerical kernels, and compiled V1 weight values are preserved. Tests cover implementation consistency and reject unsupported model packages. They do not establish independent DFT accuracy, material-grid projection accuracy, or size/k-grid convergence. No new DFT or production calculation was run.
 
