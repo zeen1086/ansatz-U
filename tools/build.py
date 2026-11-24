@@ -9,7 +9,8 @@ import shutil
 import subprocess
 import sys
 
-from parameters import ROOT, fortran_module, load
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.parameters import ROOT, fortran_module, load
 
 DEFAULT_LIBS = "-framework Accelerate" if sys.platform == "darwin" else "-llapack -lblas"
 
@@ -51,7 +52,7 @@ def state(source: Path, fc: str, flags: list[str], libs: list[str], values: dict
             "compiler": compiler, "compiler_mtime_ns": Path(compiler[0]).stat().st_mtime_ns,
             "flags": flags, "libs": libs,
             "sources": {str(p.relative_to(ROOT)): file_state(p)
-                        for p in dependencies(source) + [ROOT / "build.py", ROOT / "parameters.py"]}}
+                        for p in dependencies(source) + [ROOT / "tools/build.py", ROOT / "tools/parameters.py"]}}
 
 
 def verify(source: Path) -> Path:

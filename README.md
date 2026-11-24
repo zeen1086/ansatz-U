@@ -10,7 +10,10 @@ One supported workflow for the frozen LaNiO₂ V1 model: export existing weights
 | `5_wannier` | NSCF/Wannier templates and wavefunction/projector format conversion |
 | `6_RVR` | Current V1 local spatial-kernel projection, merging, and background/projector readers |
 | `7_spin` | V1 Hamiltonians, batch calculations, and complete-energy readout |
-| `common`, `examples`, `tests` | Shared numerical modules, input templates, and offline tests |
+| `common`, `tools` | Shared Fortran modules; Python helpers and QE/Wannier preparation commands |
+| `examples`, `tests`, `docs` | Input templates, offline tests, and provenance/validation notes |
+
+The root contains five tracked files: this README, `local_vfunc.py` (the V1 command-line interface), `Makefile` (native builds), `parameter` (QE/Wannier preparation settings), and `.gitignore`. Preparation commands live in `tools/`; tests run through `tests/check.py`.
 
 ## Current V1 workflow
 
@@ -48,11 +51,13 @@ Requirements: Python 3.11+, NumPy, Fortran, and BLAS/LAPACK, plus the appropriat
 
 ```sh
 export ANSATZ_BUILD_DIR=/absolute/external/ansatz-build
-/path/to/existing/python configure.py --output-dir /absolute/external/case
-/path/to/existing/python build.py 4_potential/V_split.f90
+/path/to/existing/python tools/configure.py --output-dir /absolute/external/case
+/path/to/existing/python tools/build.py 4_potential/V_split.f90
 ```
 
-Regenerate inputs and rebuild after changing `parameter`. `run.py` checks build signatures and preserves the calling directory. See `0_QE/README.md` for QE installation. Set pseudopotential names and numerical grids in the templates to match the actual inputs. Structure, projection, and lattice templates come from the original LaNiO₂ inputs and do not modify the frozen model.
+Regenerate inputs and rebuild after changing `parameter`. `tools/run.py` checks build signatures and preserves the calling directory. See `0_QE/README.md` for QE installation. Set pseudopotential names and numerical grids in the templates to match the actual inputs. Structure, projection, and lattice templates come from the original LaNiO₂ inputs and do not modify the frozen model.
+
+Scripts using earlier root-level preparation commands must use `tools/configure.py`, `tools/build.py`, `tools/run.py`, and `tools/parameters.py`. Existing build fingerprints and production work bound to earlier source files may require rebuilding or fresh work directories.
 
 Set `ANSATZ_PARAMETER=/absolute/external/parameter` to select external preparation configuration. Wannier scripts preserve the calling directory: enter the external run directory before invoking them. Replace the explicit placeholder paths with your input paths.
 
@@ -60,4 +65,4 @@ Set `ANSATZ_PARAMETER=/absolute/external/parameter` to select external preparati
 
 V1 projection takes model-aligned raw `wan_1 ... wan_30` and `weighted_translations.dat`; see [6_RVR](6_RVR/README.md) for grid, translation, and weight matching. Exported models must declare `N_single_response_to_v_B` and include their complete runtime. Export the original coupled V1 weights with the current command to create a compatible package.
 
-`check.py` runs offline tests. See `VALIDATION.md` for numerical summaries and `PROVENANCE.md` for source provenance. Supply models, wavefunctions, caches, and run outputs through external paths.
+`python tests/check.py` runs offline tests with your existing interpreter. See [validation](docs/VALIDATION.md) for numerical summaries and [provenance](docs/PROVENANCE.md) for source origins. Supply models, wavefunctions, caches, and run outputs through external paths.

@@ -5,8 +5,8 @@ import argparse
 import sys
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from fortran_io import new_outputs, write_record
-from parameters import load
+from tools.fortran_io import new_outputs, write_record
+from tools.parameters import load
 
 
 def read_u(path: Path) -> tuple[np.ndarray, np.ndarray]:

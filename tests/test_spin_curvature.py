@@ -13,7 +13,7 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO/'7_spin'))
-from spin_coordinates import CHART_KEYS, chart_spins, curvature_cases, derivative_files, tangent_basis
+from tools.spin_coordinates import CHART_KEYS, chart_spins, curvature_cases, derivative_files, tangent_basis
 import local_vfunc
 import run_material
 import complete_energy

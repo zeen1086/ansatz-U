@@ -3,16 +3,18 @@ from pathlib import Path
 import csv
 import json
 import math
+import sys
 import numpy as np
 
-from common import CONFIG
+from common import CONFIG, SOURCE
+sys.path.insert(0, str(SOURCE))
 ROOT = Path(CONFIG['complete_energy']['work'])
 
 def richardson(a, b):
     return (4*a-b)/3
 
 def curvature_result(definition, energy, torque):
-    from spin_coordinates import curvature_cases
+    from tools.spin_coordinates import curvature_cases
     steps=definition['outer_steps_rad'];sites=definition['sites']
     if definition['angle_configurations'] != curvature_cases(sites,steps):
         raise ValueError('Curvature probe order differs from the fixed chart stencil')

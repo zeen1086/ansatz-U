@@ -14,7 +14,7 @@ import subprocess
 import sys
 
 import numpy as np
-from spin_coordinates import CHART_KEYS, chart_spins, derivative_files
+from tools.spin_coordinates import CHART_KEYS, chart_spins, derivative_files
 
 SCHEMA = 'LANIO2_LOCAL_VFUNC_V2'
 PREDICTION_RULE = 'N_single_response_to_v_B'

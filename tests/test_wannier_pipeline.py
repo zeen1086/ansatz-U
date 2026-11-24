@@ -7,9 +7,9 @@ import tempfile
 import unittest
 import numpy as np
 
-from build import DEFAULT_LIBS
-from parameters import ROOT, load, fortran_module
-from fortran_io import write_record, read_array
+from tools.build import DEFAULT_LIBS
+from tools.parameters import ROOT, load, fortran_module
+from tools.fortran_io import write_record, read_array
 
 
 class WannierPipelineTests(unittest.TestCase):

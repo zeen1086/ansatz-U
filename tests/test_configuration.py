@@ -6,8 +6,8 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-from configure import configure, render
-from parameters import ROOT, fortran_module, load
+from tools.configure import configure, render
+from tools.parameters import ROOT, fortran_module, load
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -50,7 +50,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_generation_preserves_unmanaged_input(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'scf.in';path.write_text('user input\n')
-            with patch('configure.render',return_value={path:'new\n'}):
+            with patch('tools.configure.render',return_value={path:'new\n'}):
                 with self.assertRaises(FileExistsError):configure()
             self.assertEqual(path.read_text(),'user input\n')
 

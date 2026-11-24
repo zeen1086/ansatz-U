@@ -2,10 +2,12 @@
 """Run a verified Fortran build from the current calculation directory."""
 from pathlib import Path
 import argparse
+import sys
 import os
 
-from build import verify
-from parameters import ROOT
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tools.build import verify
+from tools.parameters import ROOT
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

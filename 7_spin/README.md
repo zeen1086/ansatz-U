@@ -282,7 +282,7 @@ Set `spin_work` explicitly for spin-dependent outputs. Complete energy also requ
 
 ```sh
 /absolute/python 7_spin/complete_readout.py
-/absolute/python -B check.py
+/absolute/python -B tests/check.py
 ```
 
 `complete_readout.py` includes finite-difference checks of energy, the Hubbard term, and fixed-electron-number response.

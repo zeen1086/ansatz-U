@@ -5,8 +5,8 @@ import subprocess
 import tempfile
 import unittest
 import numpy as np
-from fortran_io import read_array,write_record
-from parameters import ROOT,fortran_module,load
+from tools.fortran_io import read_array,write_record
+from tools.parameters import ROOT,fortran_module,load
 
 
 @unittest.skipUnless(shutil.which('gfortran'),'gfortran is unavailable')

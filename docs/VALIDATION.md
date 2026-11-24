@@ -5,7 +5,8 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 | Check | Result |
 |---|---|
 | Repository offline suite | 69 passed; 1 MPI check skipped because the compiler and mpirun are unavailable |
-| Clean external builds through default `make` and `build.py` | Passed; Python build fingerprints verified |
+| Root layout and moved preparation commands | Offline suite passed after relocation; external-directory configure/build/run, argument forwarding, working-directory preservation, and stale-build rejection passed |
+| Clean external builds through default `make` and `tools/build.py` | Passed; Python build fingerprints verified |
 | Single-response algebra, full complex N, symmetry, occupation bounds, and parameter derivatives | Passed |
 | Actual iteration-30 source conversion | 14 parameter arrays identical to the reference conversion |
 | Native synthetic RVR/H/dH, L=1,2,3, independent real-grid integration | 120 component comparisons; maximum error 1.353e-16 eV |
@@ -16,4 +17,4 @@ Verified on 2026-11-24. The evaluator uses `N0 = sigmoid(Q0)`, `N1 = sigmoid(Q0 
 
 The shared NPY parsing and byte-count checks, current numerical kernels, and compiled V1 weight values are preserved. Tests cover implementation consistency and reject unsupported model packages. They do not establish independent DFT accuracy, material-grid projection accuracy, or size/k-grid convergence. No new DFT or production calculation was run.
 
-See [7_spin](7_spin/README.md#small-checks-and-native-regression) for test commands and [6_RVR](6_RVR/README.md) for the required model export format. Model, basis, runtime, or input changes require matching data and fresh work directories.
+See [7_spin](../7_spin/README.md#small-checks-and-native-regression) for test commands and [6_RVR](../6_RVR/README.md) for the required model export format. Model, basis, runtime, or input changes require matching data and fresh work directories.

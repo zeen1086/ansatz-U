@@ -17,7 +17,7 @@ from common import compute_node, run, save, load_h, chemical_potential, check_re
 from common import atomic_npz, valid_npz, valid_json, archive_incomplete, bind_inputs, input_digest, arrays_digest
 from torque_contract import derivative,contract_batch
 sys.path.insert(0, str(SOURCE))
-from spin_coordinates import chart_spins, tangent_basis, derivative_files
+from tools.spin_coordinates import chart_spins, tangent_basis, derivative_files
 
 
 def binding() -> None:
@@ -147,7 +147,7 @@ def coefficient_identity(structure, sites, step, *, tangent=False):
                 model=input_digest(INTERFACE/'V_func_tmp/V_FUNC.json'),
                 evaluator=input_digest(SOURCE/'local_vfunc.py'), runtime=prediction_identity())
     if tangent:
-        identity.update(tangent=True, coordinates=input_digest(SOURCE/'spin_coordinates.py'))
+        identity.update(tangent=True, coordinates=input_digest(SOURCE/'tools/spin_coordinates.py'))
     return identity
 
 

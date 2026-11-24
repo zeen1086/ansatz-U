@@ -12,7 +12,7 @@ from common import atomic_npz, valid_npz, valid_json, bind_inputs, archive_incom
 from run_material import native_batch, binding, spin_structure, global_spin_rotation, coefficient_identity, valid_coefficients, prediction_identity
 from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
-from spin_coordinates import curvature_cases, derivative_files
+from tools.spin_coordinates import curvature_cases, derivative_files
 ENERGY=CONFIG['complete_energy']
 R=Path(ENERGY['work']);MIN=Path(ENERGY['reference_run'])
 SHARED=Path(ENERGY['shared_work'])
@@ -120,7 +120,7 @@ def cache_identity():
             if path.is_file(): files[label+'/'+path.name] = path
     for name in ('complete_energy.py','complete_readout.py','density_map.py','cal_Hsk.f90','common.py','run_material.py','torque_contract.py','native_input.py','kz_production.py'):
         files['code/'+name] = Path(__file__).with_name(name)
-    files['code/spin_coordinates.py'] = SOURCE/'spin_coordinates.py'
+    files['code/spin_coordinates.py'] = SOURCE/'tools/spin_coordinates.py'
     files['code/summarize_energy.py'] = Path(__file__).with_name('summarize_energy.py')
     files['code/frozen_io.f90']=SOURCE/'6_RVR/frozen_io.f90'
     return dict(version=1, files={name:input_digest(path) for name,path in files.items()},

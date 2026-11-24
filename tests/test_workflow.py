@@ -7,15 +7,16 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import numpy as np
-from build import build, verify
-from configure import configure
-from fortran_io import read_array, read_record, write_record
-from parameters import ROOT, load
+from tools.build import build, verify
+from tools.configure import configure
+from tools.fortran_io import read_array, read_record, write_record
+from tools.parameters import ROOT, load
 
 
 def module(name, relative):
@@ -96,14 +97,31 @@ class WorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=ROOT/".build") as directory:
             base=Path(directory); source=base/"probe.f90"; config=base/"parameter"
             config.write_text((ROOT/"parameter").read_text())
-            source.write_text("program probe\nuse parameter_mod\nprint *,p_nwan\nend program\n")
+            source.write_text("program probe\nuse parameter_mod\ncharacter(len=256)::argument\n"
+                              "call get_command_argument(1,argument)\nif(len_trim(argument)>0)then\n"
+                              "open(10,file='run-output.txt',status='replace')\n"
+                              "write(10,'(A)')trim(argument)\nclose(10)\nendif\n"
+                              "print *,p_nwan\nend program\n")
             with patch.dict(os.environ,{"ANSATZ_PARAMETER":str(config),"ANSATZ_BUILD_DIR":str(base/"build")}):
                 build([source],"gfortran",["-O0"],[])
                 binary=verify(source); stamp=binary.stat().st_mtime_ns
                 build([source],"gfortran",["-O0"],[])
                 self.assertEqual(binary.stat().st_mtime_ns,stamp)
                 self.assertEqual(subprocess.check_output([str(binary)],text=True).strip(),"30")
-                config.write_text(config.read_text().replace("nr1 = 64","nr1 = 32"))
+                with tempfile.TemporaryDirectory() as run_directory:
+                    subprocess.run([sys.executable,str(ROOT/'tools/configure.py'),'--check'],
+                                   cwd=run_directory,check=True,capture_output=True)
+                    subprocess.run([sys.executable,str(ROOT/'tools/build.py'),str(source),
+                                    '--fc','gfortran','--flags=-O0','--libs='],
+                                   cwd=run_directory,check=True,capture_output=True)
+                    command=[sys.executable,str(ROOT/'tools/run.py'),str(source.relative_to(ROOT)),
+                             'argument with spaces']
+                    self.assertEqual(subprocess.check_output(command,cwd=run_directory,text=True).strip(),"30")
+                    self.assertEqual((Path(run_directory)/'run-output.txt').read_text(),'argument with spaces\n')
+                    config.write_text(config.read_text().replace("nr1 = 64","nr1 = 32"))
+                    rejected=subprocess.run(command,cwd=run_directory,text=True,capture_output=True)
+                    self.assertNotEqual(rejected.returncode,0)
+                    self.assertIn('Rebuild',rejected.stderr)
                 with self.assertRaises(RuntimeError): verify(source)
                 build([source],"gfortran",["-O0"],[]); verify(source)
                 original=binary.read_bytes()

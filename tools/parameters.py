@@ -9,7 +9,7 @@ try:
 except ModuleNotFoundError:
     import tomli as tomllib  # Python 3.10 hosts may use an already installed tomli.
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 PATH_KEYS = {"nscf_dir", "pseudo_dir"}
 
 
