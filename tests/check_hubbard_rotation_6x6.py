@@ -73,12 +73,13 @@ def run(runs: Path, scratch: Path) -> dict:
     with np.load(case_dir / "coeff/prediction.npz") as saved:
         archived_model_error = float(np.max(abs(n_model - saved["N"])))
         archived_potential_error = float(np.max(abs(v_model - saved["VU"])))
+        np.testing.assert_allclose(saved["VU"], ueff*(.5*np.eye(10)-saved["N"]), rtol=0, atol=1e-12)
     n_model_error = float(np.max(abs(predictions[1][0] - spinor @ n_model @ spinor.T)))
     v_model_error = float(np.max(abs(predictions[1][1] - spinor @ v_model @ spinor.T)))
     scalar_error = float(np.max(abs(predictions[1][2][..., 0] - p_model[..., 0])))
     magnetic_error = float(np.max(abs(predictions[1][2][..., 1:] - p_model[..., 1:] @ spin_vectors)))
-    assert max(archived_model_error, archived_potential_error, n_model_error, v_model_error,
-               scalar_error, magnetic_error) < 1e-10
+    np.testing.assert_allclose(v_model, ueff*(.5*np.eye(10)-n_model), rtol=0, atol=1e-12)
+    assert max(n_model_error, v_model_error, scalar_error, magnetic_error) < 1e-10
 
     active = sum(read_n(density / f"density_z{z}.npz") for z in range(8))
     ref = read_n(archived / "reference/background.npz")
@@ -129,7 +130,7 @@ def run(runs: Path, scratch: Path) -> dict:
         "global_spin_rotation_deg": rotated_case["global_spin_rotation_deg"],
         "active_source": "sum of N from density_z0.npz through density_z7.npz",
         "rotated_active_source": "explicit spinor rotation of archived active occupation",
-        "model_source": "fresh local_vfunc.evaluate for both structures",
+        "model_source": "fresh one-way predictions for both structures, compared with archived coupled coefficients",
         "model_original_vs_checkpoint_N_max": archived_model_error,
         "model_original_vs_checkpoint_V_max_eV": archived_potential_error,
         "model_rotation_N_max": n_model_error, "model_rotation_V_max_eV": v_model_error,

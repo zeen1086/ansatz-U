@@ -9,7 +9,7 @@ from complete_readout import static,operators,metric,fermi,loewner,hubbard,trace
 from native_input import input_file,write_density,read_density
 from common import ROOT, REF, CONFIG, WORK, INTERFACE, SOURCE, compute_node, load_h, quality_check, check_regression, shared_bundle
 from common import atomic_npz, valid_npz, valid_json, bind_inputs, archive_incomplete, input_digest
-from run_material import native_batch, binding, spin_structure, global_spin_rotation, coefficient_identity, valid_coefficients
+from run_material import native_batch, binding, spin_structure, global_spin_rotation, coefficient_identity, valid_coefficients, prediction_identity
 from torque_contract import derivative, contract_batch
 from kz_production import stage_slice, layout
 ENERGY=CONFIG['complete_energy']
@@ -436,6 +436,7 @@ def main(z):
     identity=cache_identity();identity['Ueff_eV']=ueff;bind_cache(identity)
     spin_files={str(ROOT/f'inputs/L{L:02}'/name):input_digest(ROOT/f'inputs/L{L:02}'/name) for L in SIZES for name in ('structure.npz','CASE.json')}
     spin_files['native_binary']=input_digest(Path(ENERGY['native_binary']))
+    spin_files['prediction_runtime']=prediction_identity()
     for root in ENERGY.get('reuse_cases',{}).values():
         for path in sorted(Path(root).glob('case_*/coeff/*')):
             if path.is_file():spin_files[str(path)]=input_digest(path)

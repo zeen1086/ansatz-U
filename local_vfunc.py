@@ -1,4 +1,4 @@
-"""Lossless frozen-V1 export and feedback input for the native local RVR chain."""
+"""Frozen V1 parameters and one-way predictions for the native local RVR chain."""
 from __future__ import annotations
 
 import argparse
@@ -16,6 +16,8 @@ import sys
 import numpy as np
 
 SCHEMA = 'LANIO2_LOCAL_VFUNC_V2'
+PREDICTION_RULE = 'N_dir_to_v_B'
+LOCAL_CODE = Path(__file__).resolve().parent/'4_potential/local'
 RUNTIME = ('features.py', 'symmetry.py', 'model.py', 'workflow.py', 'local_field.py', 'predict.py')
 DATA = ('C_v_local.npy', 'C_B_local.npy', 'local_grid.npz', 'KERNELS.json',
         'model/model.json', 'model/parameters.npz')
@@ -26,8 +28,17 @@ def save(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, indent=2, allow_nan=False)+'\n')
 
 
-def runtime(directory: Path):
-    code = (directory/'runtime').resolve()
+def runtime_path(directory: Path, meta: dict) -> Path:
+    rule = meta.get('prediction_rule')
+    if rule is None:  # Legacy packages embed the retired iterative evaluator.
+        return LOCAL_CODE
+    if rule != PREDICTION_RULE:
+        raise ValueError(f'Unsupported prediction rule: {rule}')
+    return (directory/'runtime').resolve()
+
+
+def runtime(directory: Path, meta: dict | None = None):
+    code = runtime_path(directory, metadata(directory) if meta is None else meta)
     # Frozen modules use their original absolute imports; never silently mix versions.
     for name in (Path(f).stem for f in RUNTIME):
         old = sys.modules.get(name)
@@ -39,15 +50,15 @@ def runtime(directory: Path):
 
 def export(source: Path, code: Path, structure: Path, output: Path,
            scalar_offset_eV: float) -> dict:
-    """Copy immutable arrays and the exact inference code; add native geometry metadata."""
+    """Copy frozen weights and package the one-way inference code with native geometry."""
     source, code, output = source.resolve(), code.resolve(), output.absolute()
     if output.exists() or output.is_symlink():
         raise FileExistsError(f'Refusing to replace existing model: {output}')
     if not np.isfinite(scalar_offset_eV):
         raise ValueError('Finite, fixed scalar energy offset required')
     meta = json.loads((source/'model/model.json').read_text())
-    if meta['schema'] != 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2':
-        raise ValueError('This exporter requires the frozen active-channel V1 schema')
+    if meta['schema'] not in ('LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2', 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'):
+        raise ValueError('Unsupported active-channel source model')
     with np.load(structure, allow_pickle=False) as z:
         cell, positions, species, ni = (z[k].copy() for k in ('cell','positions','species','ni'))
     if len(ni) != 4 or cell.shape != (3, 3):
@@ -74,8 +85,9 @@ def export(source: Path, code: Path, structure: Path, output: Path,
     if kernel['cutoff_A'] != 6. or meta['scalar_gauge'] != 'cell_mean_zero':
         raise ValueError('Unsupported frozen kernel/gauge definition')
     identity = {f: {'bytes':(source/f).stat().st_size} for f in DATA}
-    identity.update({f'runtime/{f}': {'bytes':(code/f).stat().st_size} for f in RUNTIME})
-    contract = dict(schema=SCHEMA, files=identity, primitive_cell_A=primitive.tolist(),
+    runtime_files = {f: (LOCAL_CODE if f in ('model.py', 'workflow.py', 'predict.py') else code)/f for f in RUNTIME}
+    identity.update({f'runtime/{f}': {'bytes':path.stat().st_size} for f,path in runtime_files.items()})
+    contract = dict(schema=SCHEMA, prediction_rule=PREDICTION_RULE, files=identity, primitive_cell_A=primitive.tolist(),
         Ni_fractional=centers[0].tolist(), primitive_motif=[list(m) for m in motif],
         primitive_grid=grid.tolist(), scalar_offset_eV=scalar_offset_eV,
         scalar_gauge='subtract full-cell grid mean, then add fixed scalar_offset_eV',
@@ -90,8 +102,8 @@ def export(source: Path, code: Path, structure: Path, output: Path,
         (stage/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source/name, stage/name)
     (stage/'runtime').mkdir()
-    for name in RUNTIME:
-        shutil.copy2(code/name, stage/'runtime'/name)
+    for name,path in runtime_files.items():
+        shutil.copy2(path, stage/'runtime'/name)
     with (stage/'native_geometry.bin').open('xb') as f:
         f.write(b'LANIO2_VFUNC_V2 ')
         f.write(struct.pack('<8i', 1, ncoef, len(nodes), *grid, 0, 0))
@@ -286,15 +298,14 @@ def evaluate(directory: Path, structure: Path, output: Path,
     meta = metadata(directory)
     if meta['schema'] != SCHEMA or step <= 0 or not np.isfinite(step):
         raise ValueError('Invalid package or derivative step')
-    predict, features = runtime(directory)
+    predict, features = runtime(directory, meta)
     bundle = predict.Bundle(directory)
     s, length, order = read_structure(structure, meta, features)
     if len(set(derivative_sites)) != len(derivative_sites) or any(i < 1 or i > len(s.ni) for i in derivative_sites):
         raise ValueError('Unique 1-based native Ni derivative sites required')
     output.mkdir(parents=True, exist_ok=False)
     def value(spins):
-        pred = bundle.model.predict(replace(s, spins=spins), tolerance=1e-12)
-        pred.assert_converged()
+        pred = bundle.model.predict(replace(s, spins=spins))
         return bundle.model.physical_p(pred), pred.N
     p, n = value(s.spins)
     write_coeff(output/'value.bin', meta, length, p, n, False)
@@ -317,7 +328,7 @@ def evaluate(directory: Path, structure: Path, output: Path,
                  derivative_sites=derivative_sites, native_from_input_order=order)
     report = dict(status='COMPLETE', model_id=meta['model_id'], L=length,
                   derivative_sites=derivative_sites, derivative_step_rad=step,
-                  derivative_axis=[0,1,0], feedback='converged on every finite-difference evaluation',
+                  derivative_axis=[0,1,0], prediction_rule=PREDICTION_RULE,
                   native_from_input_order=order.tolist(), scalar_offset_eV=meta['scalar_offset_eV'])
     save(output/'PREDICTION.json', report)
     return report

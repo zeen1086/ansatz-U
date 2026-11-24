@@ -131,10 +131,19 @@ def kz_groups(k: np.ndarray):
             yield members[start:start+16]
 
 
+def prediction_identity():
+    if str(SOURCE) not in sys.path:
+        sys.path.insert(0,str(SOURCE))
+    from local_vfunc import RUNTIME, runtime_path
+    model = INTERFACE/'V_func_tmp'
+    code = runtime_path(model, json.loads((model/'V_FUNC.json').read_text()))
+    return {f:input_digest(code/f) for f in RUNTIME}
+
+
 def coefficient_identity(structure, sites, step):
     return dict(structure=arrays_digest(structure),sites=list(sites),step=step,
                 model=input_digest(INTERFACE/'V_func_tmp/V_FUNC.json'),
-                evaluator=input_digest(SOURCE/'local_vfunc.py'))
+                evaluator=input_digest(SOURCE/'local_vfunc.py'), runtime=prediction_identity())
 
 
 def valid_coefficients(directory, identity):
@@ -183,10 +192,14 @@ def spin_structure(length, case):
 
 
 def bind_case(length, definition, case, out, mesh, step):
+    if not (out/'INPUTS.json').exists() and any(
+            any(out.glob(pattern)) for pattern in ('k_*','SPECTRA.*','TORQUE.json')):
+        raise ValueError(f'Unbound spin results have unknown prediction rule: {out}; use a new output directory')
     files=[INTERFACE/'V_func_tmp/V_FUNC.json',WORK/'RVR/B_general',WORK/'RVR/PROJECTION.json',WORK/'basis/pure_H0.au',BUILD/'local/cal_Hsk']
     files += [Path(__file__).with_name(name) for name in ('run_material.py','common.py','kz_production.py','torque_contract.py')]
     bind_inputs(out,dict(structure=arrays_digest(spin_structure(length,case)),definition=definition,
-                        case=case,mesh=mesh,step=step,files={str(f):input_digest(f) for f in files}))
+                        case=case,mesh=mesh,step=step,runtime=prediction_identity(),
+                        files={str(f):input_digest(f) for f in files}))
 
 
 def regression_assemble() -> None:

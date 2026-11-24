@@ -6,7 +6,11 @@ import numpy as np
 
 from features import FeatureSpec
 from model import LocalModel, Reference
-from symmetry import finite, require
+from symmetry import REP, finite, require
+
+ONE_WAY_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_ONE_WAY_V1'
+COUPLED_SCHEMA = 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2'
+WARM_SCHEMAS = ('LANIO2_GEOMETRIC_FEEDBACK_V1', 'LANIO2_SEPARATE_LOCAL_GRID_FEEDBACK_V1')
 
 
 @dataclass(frozen=True)
@@ -27,11 +31,10 @@ class LossConfig:
 
 def save_model(model: LocalModel, directory: Path, training_record: dict | None = None) -> None:
     directory.mkdir(parents=True, exist_ok=False)
-    meta = dict(schema='LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2', feature=asdict(model.spec),
+    meta = dict(schema=ONE_WAY_SCHEMA, feature=asdict(model.spec),
                 p_scales=model.p_scales.tolist(), p_representation=model.prep.tolist(),
-                rho=model.rho, ueff=model.ueff, v_channels=getattr(model,'v_channels',model.np),
-                head_coordinates='Qeff=Q+L(p0-pref); exact compensated feedback',
-                feedback_coordinates={k:v.tolist() for k,v in model.feedback_coordinates.items()},
+                ueff=model.ueff, v_channels=getattr(model,'v_channels',model.np),
+                head_coordinates='N=sigmoid(Q0); p=p0+K(N-Nref)',
                 feature_scales={k: v.tolist() for k, v in model.feature_scales.items()},
                 feature_transforms={k:v.tolist() for k,v in model.feature_transforms.items()},
                 p_feature_maps=None if model.p_feature_maps is None else {k:{p:a.tolist() for p,a in v.items()} for k,v in model.p_feature_maps.items()},
@@ -44,30 +47,56 @@ def save_model(model: LocalModel, directory: Path, training_record: dict | None 
     np.savez(directory/'parameters.npz', **model.params)
 
 
+def _import_coupled_weights(model: LocalModel, data, meta: dict) -> None:
+    # Released weights store raw K. Recover its original normalization once, before dropping L.
+    projected_k = model.occupation_to_field_maps()
+    projected_l = {}
+    k_norm_sq = l_norm_sq = 0.
+    for sector, multiplicity in (('se', 1), ('vo', 3)):
+        key = 'L_' + sector
+        raw_l = data[key]
+        require(raw_l.shape == (15, model.np) and raw_l.dtype == np.float64, f'parameter shape/type: {key}')
+        finite(raw_l, key)
+        lmap = np.einsum('gab,bc,gdc->ad', REP[sector], raw_l, model.prep) / len(model.prep)
+        projected_l[sector] = lmap
+        coords = np.array(meta.get('feedback_coordinates', {}).get(sector, np.eye(model.np)))
+        k_norm_sq += multiplicity * np.sum((coords @ projected_k['K_' + sector])**2)
+        l_norm_sq += multiplicity * np.sum((lmap @ np.linalg.inv(coords))**2)
+    norm_product = np.sqrt(k_norm_sq) * np.sqrt(l_norm_sq)
+    require(np.isfinite(norm_product), 'legacy feedback norm overflow')
+    scale = min(1., np.sqrt(4*meta['rho']/norm_product)) if norm_product else 1.
+    for sector, column, refname in (('se', 0, 'p_scalar'), ('vo', 1, 'p_spin')):
+        model.params['K_' + sector] *= scale
+        if meta['schema'] in WARM_SCHEMAS:
+            # Pre-V2 checkpoints stored the uncompensated occupation head.
+            lmap = scale * projected_l[sector]
+            model.params['Q_' + sector] += lmap @ model.params['p_' + sector]
+            model.params['b_Q_' + sector] += lmap @ (
+                model.params['b_p_' + sector] - getattr(model.reference, refname)/model.scale[:, column])
+
+
 def load_model(directory: Path, warm=False):
     meta = json.loads((directory/'model.json').read_text())
-    schema = 'LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2'
-    require(meta['schema'] == schema or (warm and meta['schema'] in ('LANIO2_GEOMETRIC_FEEDBACK_V1','LANIO2_SEPARATE_LOCAL_GRID_FEEDBACK_V1')), 'unsupported model schema')
+    schema = meta['schema']
+    require(schema in (ONE_WAY_SCHEMA, COUPLED_SCHEMA) or (warm and schema in WARM_SCHEMAS), 'unsupported model schema')
     ref = Reference(**{k: v if k == 'source' else np.array(v)
                        for k, v in meta['reference'].items()})
-    args = (FeatureSpec(**meta['feature']), np.array(meta['p_scales']), ref, meta['rho'])
+    args = (FeatureSpec(**meta['feature']), np.array(meta['p_scales']), ref, meta.get('rho'))
     model = LocalModel(*args, p_representation=np.array(meta['p_representation']), ueff=meta['ueff'])
-    model.feedback_coordinates = {k:np.array(v) for k,v in meta.get('feedback_coordinates', {k:np.eye(model.np).tolist() for k in ('se','vo')}).items()}
     model.v_channels=meta.get('v_channels',model.np)
     model.feature_scales = {k: np.array(v) for k, v in meta['feature_scales'].items()}
     model.feature_transforms={k:np.array(v) for k,v in meta.get('feature_transforms',{k:np.eye(len(v)).tolist() for k,v in model.feature_scales.items()}).items()}
     if meta.get('p_feature_maps') is not None:model.p_feature_maps={k:{p:np.array(a) for p,a in v.items()} for k,v in meta['p_feature_maps'].items()}
     with np.load(directory/'parameters.npz', allow_pickle=False) as data:
-        require(set(data.files) == set(model.params), 'model parameter keys mismatch')
+        expected = set(model.params)
+        if schema != ONE_WAY_SCHEMA:
+            expected.update(('L_se', 'L_vo'))
+        require(set(data.files) == expected, 'model parameter keys mismatch')
         for key, value in model.params.items():
             a = data[key]
             require(a.shape == value.shape and a.dtype == np.float64, f'parameter shape/type: {key}')
             finite(a, key); model.params[key] = a.copy()
-    if warm and meta['schema']!='LANIO2_ACTIVE_LOCAL_GRID_FEEDBACK_V2':
-        maps,_=model.feedback_maps()
-        for sector,column,refname in (('se',0,'p_scalar'),('vo',1,'p_spin')):
-            l=maps['L_'+sector]
-            model.params['Q_'+sector]+=l@model.params['p_'+sector]
-            model.params['b_Q_'+sector]+=l@(model.params['b_p_'+sector]-getattr(model.reference,refname)/model.scale[:,column])
+        if schema != ONE_WAY_SCHEMA:
+            _import_coupled_weights(model, data, meta)
     return model
 

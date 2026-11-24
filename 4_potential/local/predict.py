@@ -22,7 +22,7 @@ class Bundle:
         """Scalar values before cell-mean gauge; subtract its mean over the full requested grid."""
         structure.validate();points=np.asarray(points,dtype=float)
         require(points.ndim==2 and points.shape[1]==3 and np.isfinite(points).all(),'Cartesian grid points')
-        pred=prediction or self.model.predict(structure,tolerance=1e-11);pred.assert_converged()
+        pred=prediction or self.model.predict(structure)
         p=self.model.physical_p(pred);out=np.zeros((len(points),4))
         for start in range(0,len(points),2048):
             part=points[start:start+2048];values=out[start:start+2048]

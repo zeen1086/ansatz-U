@@ -62,12 +62,15 @@ class RestartProtocolTests(unittest.TestCase):
             np.savez(root/'inputs/L02/structure.npz',spins=np.array([[0.,0.,1.]]))
             case={'perturb_site_native_1based':None,'angle_deg':0}
             out=root/'results'
-            with patch.object(material,'ROOT',root),patch.object(material,'input_digest',return_value='fixture'):
+            with patch.object(material,'ROOT',root),patch.object(material,'input_digest',return_value='fixture'),patch.object(material,'prediction_identity',return_value={}):
                 material.bind_case(2,{},case,out,2,.001)
                 (out/'TORQUE.json').write_text('{"status":"COMPLETE"}')
                 material.bind_case(2,{},case,out,2,.001)
                 np.savez(root/'inputs/L02/structure.npz',spins=np.array([[1.,0.,0.]]))
                 with self.assertRaisesRegex(ValueError,'inputs changed'):
+                    material.bind_case(2,{},case,out,2,.001)
+                (out/'INPUTS.json').unlink()
+                with self.assertRaisesRegex(ValueError,'unknown prediction rule'):
                     material.bind_case(2,{},case,out,2,.001)
             self.assertTrue((out/'TORQUE.json').exists())
 
@@ -81,7 +84,7 @@ class RestartProtocolTests(unittest.TestCase):
                 stage=Path(args[args.index('--output')+1]);stage.mkdir()
                 (stage/'PREDICTION.json').write_text('{"status":"COMPLETE"}')
                 (stage/'value.bin').write_bytes(b'value');(stage/'dsite_0001.bin').write_bytes(b'derivative')
-            with patch.object(material,'INTERFACE',root),patch.object(material,'SOURCE',source),patch.object(material,'run',side_effect=evaluate) as run:
+            with patch.object(material,'INTERFACE',root),patch.object(material,'SOURCE',source),patch.object(material,'prediction_identity',return_value={}),patch.object(material,'run',side_effect=evaluate) as run:
                 material.coefficients(structure,out,[1],.001)
                 material.coefficients(structure,out,[1],.001)
                 self.assertEqual(run.call_count,1)
@@ -90,6 +93,9 @@ class RestartProtocolTests(unittest.TestCase):
                 self.assertEqual(run.call_count,2)
                 with np.load(structure) as a:identity=material.coefficient_identity(dict(a),[1],.001)
                 self.assertTrue(material.valid_coefficients(out,identity))
+                with patch.object(material,'prediction_identity',return_value={'model.py':'new revision'}):
+                    with self.assertRaisesRegex(ValueError,'inputs changed'):
+                        material.coefficients(structure,out,[1],.001)
                 identity['structure']='different spin'
                 with self.assertRaisesRegex(ValueError,'inputs changed'):material.valid_coefficients(out,identity)
 

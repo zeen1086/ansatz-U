@@ -14,7 +14,7 @@ Fortran tools for LaNiO₂ potential fitting, Wannier/RVR processing, Hamiltonia
 
 ## Current V1 workflow
 
-The [RVR directory](6_RVR/README.md) contains only the implementation needed by the frozen iteration-30 V1 model. See [V1 → V_func_tmp → native RVR → cal_Hsk](6_RVR/README.md) for commands. At fixed geometry, L×L×1 calculations use all V1 channels, the full complex N matrix, and feedback response:
+At fixed geometry, the frozen iteration-30 V1 weights predict the full complex occupation once, `N_dir = sigmoid(Q0)`. The scalar and magnetic coefficients are `p = p0 + K(N_dir - N_ref)`; the Hamiltonian uses `VU = Ueff (I/2 - N_dir)`. Projecting its occupied states gives a separate output occupation. See the [native RVR guide](6_RVR/README.md) for commands.
 
 ```text
 local_vfunc.py export / export-background

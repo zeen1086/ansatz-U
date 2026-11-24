@@ -1,4 +1,4 @@
-"""Exact compensated-head coordinates: Qeff=Q+L(p0-pref), with the full LK feedback derivative."""
+"""One-way local model: the occupation head feeds the scalar and magnetic fields."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -66,11 +66,12 @@ class Prediction:
 
 class LocalModel:
     def __init__(self, spec: FeatureSpec, p_scales: np.ndarray,
-                 reference: Reference, rho: float, *, p_representation: np.ndarray,
+                 reference: Reference, rho: float | None = None, *, p_representation: np.ndarray,
                  ueff: float = 1., seed: int = 0):
         self.spec, self.reference = spec, reference
-        self.rho, self.ueff = float(rho), float(ueff)
-        require(0 < rho < 1 and np.isfinite(ueff) and ueff >= 0, "invalid rho/Ueff")
+        self.ueff = float(ueff)
+        require(rho is None or 0 < rho < 1, "invalid legacy contraction threshold")
+        require(np.isfinite(ueff) and ueff >= 0, "invalid Ueff")
         p_scales = np.array(p_scales, dtype=float, copy=True)
         require(p_scales.ndim == 2 and p_scales.shape[1] == 2 and len(p_scales) > 0,
                 "p_scales must be (ncoeff,2), scalar/B eV scales")
@@ -79,7 +80,6 @@ class LocalModel:
         self.scale = p_scales[:, [0, 1, 1, 1]].copy()
         self.scale.flags.writeable = False; self.p_scales.flags.writeable = False
         self.np = len(self.scale)
-        self.feedback_coordinates = {k:np.eye(self.np) for k in ("se","vo")}
         self.prep = np.array(p_representation, dtype=float, copy=True)
         require(self.prep.shape == (16, self.np, self.np), "spatial coefficient representation shape")
         finite(self.prep, "spatial coefficient representation")
@@ -123,7 +123,6 @@ class LocalModel:
         for k in ("se", "vo"):
             self.params[f"b_Q_{k}"] = np.zeros(15)
             self.params[f"K_{k}"] = np.zeros((self.np, 15))
-            self.params[f"L_{k}"] = np.zeros((15, self.np))
 
     def zero_grads(self, active=None) -> dict[str, np.ndarray]:
         return {k: np.zeros_like(v) for k, v in self.params.items() if active is None or k in active}
@@ -143,36 +142,9 @@ class LocalModel:
             out[sector][:,:,n:n+m]=character[None,:,None,None]*minus[:,None]
         return out
 
-    def feedback_maps(self) -> tuple[dict, dict]:
-        maps = {}
-        for name in ("K", "L"):
-            for k in ("se", "vo"):
-                left, right = (self.prep, REP[k]) if name == "K" else (REP[k], self.prep)
-                maps[f"{name}_{k}"] = np.einsum("gab,bc,gdc->ad", left,
-                                                   self.params[f"{name}_{k}"], right) / len(left)
-        kc = {k:self.feedback_coordinates[k]@maps[f"K_{k}"] for k in ("se","vo")}
-        inverse = {k:np.linalg.inv(self.feedback_coordinates[k]) for k in ("se","vo")}
-        lc = {k:maps[f"L_{k}"]@inverse[k] for k in ("se","vo")}
-        a = np.sqrt(sum((1 if k == "se" else 3)*np.sum(kc[k]**2) for k in ("se","vo")))
-        b = np.sqrt(sum((1 if k == "se" else 3)*np.sum(lc[k]**2) for k in ("se","vo")))
-        metric_raw = {f"K_{k}":self.feedback_coordinates[k].T@kc[k] for k in ("se","vo")}
-        metric_raw.update({f"L_{k}":lc[k]@inverse[k].T for k in ("se","vo")})
-        require(np.isfinite(a) and np.isfinite(b) and np.isfinite(a*b), "feedback norm overflow")
-        scale = min(1., np.sqrt(4*self.rho/(a*b))) if a*b else 1.
-        return {k: scale*v for k, v in maps.items()}, {"raw": maps, "a": a, "b": b, "s": scale, "metric_raw":metric_raw}
-
-    def _feedback_pullback(self, cache: dict, grad: dict, out: dict) -> None:
-        raw, a, b, s = (cache[k] for k in ("raw", "a", "b", "s"))
-        dot = sum(np.sum(grad[k]*raw[k]) for k in raw)
-        for key in raw:
-            name, k = key.split("_")
-            g = s*grad[key]
-            if s < 1:
-                norm = a if name == "K" else b
-                g = g - .5*s*dot*(1 if k == "se" else 3)*cache["metric_raw"][key]/norm**2
-            left, right = (self.prep, REP[k]) if name == "K" else (REP[k], self.prep)
-            if key not in out: continue
-            out[key] += np.einsum("gab,ad,gdc->bc", left, g, right) / len(left)
+    def occupation_to_field_maps(self) -> dict[str, np.ndarray]:
+        return {f"K_{k}": np.einsum("gab,bc,gdc->ad", self.prep, self.params[f"K_{k}"], REP[k])
+                / len(self.prep) for k in ("se", "vo")}
 
     def _head(self, name: str, z: dict, spins: np.ndarray) -> dict:
         if name=='p':z=self.field_features(z)
@@ -189,13 +161,15 @@ class LocalModel:
     def _head_pullback(self, name: str, grad: dict, cache: dict, out: dict) -> None:
         phi=self.field_features(cache['phi']) if name=='p' else cache['phi']
         for k, g in grad.items():
-            if f"{name}_{k}" not in out: continue
+            weight, bias = f"{name}_{k}", f"b_{name}_{k}"
+            if weight not in out and bias not in out: continue
             rep = REP[k] if name == "Q" else self.prep
             gr = np.einsum("gab,nac->ngbc", rep, g) / len(rep)
-            out[f"{name}_{k}"] += np.einsum("ngac,ngrc->ar", gr, phi[k])
-            if k in ("se", "vo"):
+            if weight in out:
+                out[weight] += np.einsum("ngac,ngrc->ar", gr, phi[k])
+            if bias in out:
                 direction = np.ones((len(g), 1)) if k == "se" else cache["spins"]
-                out[f"b_{name}_{k}"] += np.einsum("ngac,nc->a", gr, direction)
+                out[bias] += np.einsum("ngac,nc->a", gr, direction)
 
     @staticmethod
     def pack_p(x: dict) -> np.ndarray:
@@ -210,14 +184,6 @@ class LocalModel:
         nc = to_channels(n)
         return LocalModel.pack_p({k: np.einsum("ab,nbc->nac", maps[f"K_{k}"], nc[k])
                                   for k in ("se", "vo")})
-
-    @staticmethod
-    def _L(maps: dict, p: np.ndarray) -> np.ndarray:
-        pc = LocalModel.split_p(p)
-        nc = {k: np.zeros((len(p), a, c)) for k, (a, c) in SECTORS.items()}
-        for k in ("se", "vo"):
-            nc[k] = np.einsum("ab,nbc->nac", maps[f"L_{k}"], pc[k])
-        return to_matrix(nc)
 
     def predict(self, structure: Structure, *, auxiliary: bool = False,
                 tolerance: float = 1e-10, max_iterations: int = 100,
@@ -234,71 +200,35 @@ class LocalModel:
             scale = self.feature_scales[k]
             require(np.all(np.isfinite(scale)) and np.all(scale > 0), 'invalid fixed feature scale')
             phi[k] = raw[k] if normalized else np.einsum('ngrc,rj->ngjc',raw[k]/scale[None,None,:,None],self.feature_transforms[k])
-        head_key = id(prepared_features)
-        saved = getattr(self, '_head_cache', {}).get(head_key)
-        if saved is None:
-            p0 = self.pack_p(self._head("p", phi, structure.spins))
-            q0 = to_matrix(self._head("Q", phi, structure.spins))
-            if hasattr(self, '_head_cache'): self._head_cache[head_key] = (p0, q0)
-        else:
-            p0, q0 = saved
-        nr, pr = self.reference.values(structure.spins, self.scale)
-        maps, mc = self._maps_cache if hasattr(self, '_maps_cache') else self.feedback_maps()
-        n, initial = matrix_sigmoid(q0)
-        tape = []
-        for iteration in range(max_iterations + 1):
-            response = self._K(maps, n - nr)
-            p = p0 + response
-            checked_n, checked_cache = matrix_sigmoid(q0 + self._L(maps, response))
-            closure = self.split_p(p - (p0 + self._K(maps, n - nr)))
-            canonical = self.pack_p({k:np.einsum('ab,nbc->nac',self.feedback_coordinates[k],closure[k]) for k in ('se','vo')})
-            rp = float(np.max(np.linalg.norm(canonical.reshape(len(p), -1), axis=1)))
-            rn = float(np.max(np.linalg.norm(n - checked_n, axis=(-2, -1))))
-            if (iteration > 0 and max(rp, rn) <= tolerance) or iteration == max_iterations:
-                break
-            tape.append((n - nr, response, checked_cache))
-            n = checked_n
-        bound = mc["s"]**2 * mc["a"] * mc["b"] / 4
-        cache = dict(phi=phi, spins=structure.spins.copy(), maps=maps, mc=mc,p0=p0,
-                     initial=initial, tape=tape, final_delta=n-nr)
-        return Prediction(p, n, self.ueff*(np.eye(10)/2 - n), None,
-                          max(rp, rn) <= tolerance, iteration, rp, rn, bound, cache)
+        p0 = self.pack_p(self._head("p", phi, structure.spins))
+        q0 = to_matrix(self._head("Q", phi, structure.spins))
+        n, sigmoid_cache = matrix_sigmoid(q0)
+        nr, _ = self.reference.values(structure.spins, self.scale)
+        maps = self.occupation_to_field_maps()
+        delta = n - nr
+        p = p0 + self._K(maps, delta)
+        finite(p, "predicted field coefficients")
+        cache = dict(phi=phi, spins=structure.spins.copy(), maps=maps, sigmoid=sigmoid_cache, delta=delta)
+        return Prediction(p, n, self.ueff*(np.eye(10)/2 - n), None, True, 0, 0., 0., 0., cache)
 
     def physical_p(self, prediction: Prediction) -> np.ndarray:
         return prediction.p * self.scale
 
     def backward(self, pred: Prediction, gp: np.ndarray, gn: np.ndarray,
                  gaux: np.ndarray | None = None, *, active=None) -> dict[str, np.ndarray]:
-        """Reverse the actual unfolded iterates, including final p synchronization."""
-        pred.assert_converged()
+        """Propagate the field loss through K and N, then through the occupation head."""
         require(gaux is None, "direct model has no auxiliary density loss")
         cache, out = pred.cache, self.zero_grads(active)
-        feedback_active = any(k.startswith(("K_", "L_")) for k in out)
-        maps = cache["maps"]
-        gm = {k: np.zeros_like(v) for k, v in maps.items()}
-
-        def back_k(g: np.ndarray, delta: np.ndarray) -> np.ndarray:
-            gc, nc = self.split_p(g), to_channels(delta)
-            result = {k: np.zeros((len(g), a, c)) for k, (a, c) in SECTORS.items()}
-            for k in ("se", "vo"):
-                if feedback_active: gm[f"K_{k}"] += np.einsum("nac,nbc->ab", gc[k], nc[k])
-                result[k] = np.einsum("ab,nac->nbc", maps[f"K_{k}"], gc[k])
-            return to_matrix(result)
-
-        gp0 = gp.copy()
-        gn = gn + back_k(gp, cache["final_delta"])
-        gq0 = np.zeros_like(gn)
-        for delta_n, delta_p, sig in reversed(cache["tape"]):
-            gq = sigmoid_pullback(sig, gn); gq0 += gq
-            qc, pc = to_channels(gq), self.split_p(delta_p)
-            gpc = {}
-            for k in ("se", "vo"):
-                if feedback_active: gm[f"L_{k}"] += np.einsum("nac,nbc->ab", qc[k], pc[k])
-                gpc[k] = np.einsum("ab,nac->nbc", maps[f"L_{k}"], qc[k])
-            gpt = self.pack_p(gpc)
-            gn = back_k(gpt, delta_n)
-        gq0 += sigmoid_pullback(cache["initial"], gn)
-        if feedback_active: self._feedback_pullback(cache["mc"], gm, out)
-        self._head_pullback("p", self.split_p(gp0), cache, out)
-        self._head_pullback("Q", to_channels(gq0), cache, out)
+        field_grad = self.split_p(gp)
+        occupation_grad = to_channels(gn)
+        delta = to_channels(cache["delta"])
+        for k, g in field_grad.items():
+            key = f"K_{k}"
+            occupation_grad[k] += np.einsum("ab,nac->nbc", cache["maps"][key], g)
+            if key in out:
+                g_map = np.einsum("nac,nbc->ab", g, delta[k])
+                out[key] += np.einsum("gab,ad,gdc->bc", self.prep, g_map, REP[k]) / len(self.prep)
+        gq = sigmoid_pullback(cache["sigmoid"], to_matrix(occupation_grad))
+        self._head_pullback("p", field_grad, cache, out)
+        self._head_pullback("Q", to_channels(gq), cache, out)
         return out

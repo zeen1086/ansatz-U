@@ -16,7 +16,7 @@ Skip the following two steps if an exported model and pure H0 background already
 ```sh
 "$ANSATZ_PYTHON" local_vfunc.py export \
   --source /absolute/frozen_V1/result/final \
-  --code /absolute/frozen_V1/model_code \
+  --code ./4_potential/local \
   --structure /absolute/L02_structure.npz \
   --scalar-offset-eV=-7.187822007469299 \
   --output /absolute/model/V_func_tmp

@@ -83,9 +83,7 @@ make local-rvr BUILD=/absolute/intel-build FC=ifort \
   LIBS='-mkl=parallel'
 ```
 
-See the [local RVR interface](../6_RVR/README.md) for V1 model export. The repository's
-`4_potential/local/` contains byte-for-byte copies of six frozen inference sources and can be supplied as `--code` to the export command.
-The exported `interface/V_func_tmp` contains these sources and all frozen model parameters; runtime does not depend on the training directory.
+See the [local RVR interface](../6_RVR/README.md) for V1 model export. New exports package the repository's one-way model, loader and predictor with the frozen parameters and the feature, symmetry and field kernels from `--code`. For an existing V1 export, the evaluator uses the repository's `4_potential/local/` runtime with the original weights and RVR basis. Use fresh spin and complete-energy work paths for predictions made with the new rule.
 
 Standalone `local_vfunc.py evaluate` generates only the production-required `value.bin/dsite_XXXX.bin` and `PREDICTION.json` by default. `prediction.npz`, which duplicates these arrays, is generated only with `--keep-intermediates`. Batch drivers retain coefficients, indices, and completion markers needed for restart; they do not apply the temporary-file cleanup used after the single-configuration `cal_Hsk` command.
 

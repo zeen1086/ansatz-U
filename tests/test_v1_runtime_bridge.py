@@ -1,4 +1,4 @@
-"""Real exported V1 -> complete feedback -> native H/dH with explicit synthetic RVR."""
+"""Real exported V1 -> one-way prediction -> native H/dH with explicit synthetic RVR."""
 from pathlib import Path
 import argparse
 import json
@@ -31,7 +31,7 @@ def main(args):
                 f.write(np.asarray(kernel*(i==j),'<c16').tobytes())
     h0=np.diag(np.arange(30)*.1).astype(complex);a=np.eye(5,30,dtype=complex)*(.2+.1j)
     background(r/'pure.au',h0,a)
-    put(r/'PROJECTION.json',dict(basis_id=basis,
+    put(r/'PROJECTION.json',dict(basis_id=basis,background_id='fixture-background',
                                  scope='synthetic native RVR for real-model runtime test'))
     np.savetxt(r/'kpoints.dat',[[.13,.21,0.,1.]],header='1',comments='')
     command=[sys.executable,'-B',str(ROOT/'local_vfunc.py'),'cal_Hsk','--model',str(args.model),
@@ -65,7 +65,8 @@ def main(args):
     assert all((r/'compact'/name).read_bytes()==(r/'output'/name).read_bytes() for name in matrices)
     for label in ('value','dsite_0001','dsite_0002'):
         assert report['native_indices'][label]==(r/'output'/f'{label}.index').read_text().splitlines()
-    result=dict(status='PASS',errors_eV=errors,real_V1=True,feedback_derivatives=True,
+    assert report['prediction_rule']=='N_dir_to_v_B'
+    result=dict(status='PASS',errors_eV=errors,real_V1=True,prediction_rule=report['prediction_rule'],
                 native_assembly=True,projection_basis='synthetic known-answer fixture',
                 compact_vs_debug_identical_matrices=len(matrices),compact_indices_preserved=True,
                 actual_material_Hamiltonian_validation=False)
